@@ -1,0 +1,50 @@
+{
+ "header_timestamp": 1790000000,
+ "vehicles": [
+  {
+   "entity": "e1",
+   "trip": "BKK_T1",
+   "route": "BKK_3040",
+   "vehicle": "BKK_V100",
+   "label": "1234",
+   "stop": "BKK_F00123",
+   "lat": 47.49789810180664,
+   "lon": 19.040199279785156,
+   "bearing": 90.0,
+   "speed": 7.5,
+   "direction": 1,
+   "status": 2,
+   "ts": 1790000001
+  },
+  {
+   "entity": "e2",
+   "trip": "BKK_T2",
+   "route": "BKK_5200",
+   "vehicle": "BKK_V200",
+   "label": "Kálvin tér",
+   "stop": "",
+   "lat": 47.5,
+   "lon": 19.049999237060547,
+   "bearing": 271.5,
+   "speed": null,
+   "direction": -1,
+   "status": -1,
+   "ts": 1790000002
+  },
+  {
+   "entity": "e3",
+   "trip": "BKK_T3",
+   "route": "BKK_0910",
+   "vehicle": "BKK_V300",
+   "label": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "stop": "",
+   "lat": 47.45000076293945,
+   "lon": 19.100000381469727,
+   "bearing": null,
+   "speed": null,
+   "direction": 0,
+   "status": -1,
+   "ts": 0
+  }
+ ]
+}

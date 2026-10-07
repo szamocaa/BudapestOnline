@@ -1,0 +1,26 @@
+# Unreal Engine
+Binaries/
+DerivedDataCache/
+Intermediate/
+Saved/
+Build/
+.vs/
+.idea/
+*.sln
+*.suo
+*.opensdf
+*.sdf
+*.VC.db
+*.VC.opendb
+*.xcodeproj
+*.xcworkspace
+*.code-workspace
+.vscode/
+*.DS_Store
+
+# Raw OpenStreetMap downloads (large; re-create with Tools/Districts/bake_district.py fetch)
+Tools/Districts/raw/
+
+# Python
+__pycache__/
+*.pyc
