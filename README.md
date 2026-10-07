@@ -24,7 +24,7 @@ Run everything that does not need the engine with `Tools/run_tests.sh`.
 
 ## Quick start
 
-1. **Engine:** Unreal Engine 5.3 or newer. The `.uproject` says 5.5; if you have another version, right-click `BudapestSim.uproject` → *Switch Unreal Engine version*.
+1. **Engine:** Unreal Engine 5.3 or newer (written for 5.8). The `.uproject` says 5.8; if you have another version, right-click `BudapestSim.uproject` → *Switch Unreal Engine version*.
 2. **Build the district data** (needs internet, once):
    ```bash
    pip install -r Tools/Districts/requirements.txt
