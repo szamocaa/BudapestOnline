@@ -14,7 +14,11 @@ public class BudapestSim : ModuleRules
 			"InputCore",
 			"HTTP",
 			"DeveloperSettings",
-			"ProceduralMeshComponent"
+			"ProceduralMeshComponent",
+			"EnhancedInput",
+			"UMG",
+			"Slate",
+			"SlateCore"
 		});
 	}
 }

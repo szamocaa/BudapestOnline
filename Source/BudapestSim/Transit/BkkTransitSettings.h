@@ -25,9 +25,16 @@ public:
 	virtual FText GetSectionText() const override { return NSLOCTEXT("BudapestSim", "BkkSettingsSection", "Budapest Transit"); }
 #endif
 
-	/** Key from https://opendata.bkk.hu. The BKK_API_KEY environment variable wins if it is set. */
+	/**
+	 * Key from https://opendata.bkk.hu. Looked up in this order: the BKK_API_KEY environment variable,
+	 * this field, then a text file named ApiKeyFileName in the project folder (git-ignored).
+	 */
 	UPROPERTY(Config, EditAnywhere, Category = "BKK API")
 	FString ApiKey;
+
+	/** Plain-text file in the project folder that holds just the key. Easiest option: create it and paste the key in. */
+	UPROPERTY(Config, EditAnywhere, Category = "BKK API")
+	FString ApiKeyFileName = TEXT("BkkApiKey.txt");
 
 	/**
 	 * GTFS-realtime VehiclePositions URL. {key} is replaced with the (URL-encoded) API key.

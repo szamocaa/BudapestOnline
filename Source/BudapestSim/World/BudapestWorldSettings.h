@@ -45,16 +45,25 @@ public:
 	UPROPERTY(Config, EditAnywhere, Category = "Pedestrians")
 	bool bSpawnPedestrians = true;
 
-	/** Population at the busiest time of day. It shrinks at night and during quiet hours. */
+	/** People out across the WHOLE district at the busiest time of day. Fewer at night. Simulated cheaply everywhere. */
+	UPROPERTY(Config, EditAnywhere, Category = "Pedestrians", meta = (ClampMin = "0", ClampMax = "20000"))
+	int32 MaxDistrictPedestrians = 2500;
+
+	/** At most this many of them are full animated characters at once (the ones closest to the camera). */
 	UPROPERTY(Config, EditAnywhere, Category = "Pedestrians", meta = (ClampMin = "0", ClampMax = "1000"))
-	int32 MaxPedestrians = 150;
+	int32 MaxPedestrians = 120;
 
-	/** Pedestrians are kept within this distance of the player camera; others are removed and respawned nearby. */
-	UPROPERTY(Config, EditAnywhere, Category = "Pedestrians", meta = (ClampMin = "50.0", Units = "m"))
-	float PedestrianSpawnRadiusMeters = 250.0f;
+	/** Within this distance of the camera, pedestrians are full characters. */
+	UPROPERTY(Config, EditAnywhere, Category = "Pedestrians", meta = (ClampMin = "30.0", Units = "m"))
+	float PedestrianSpawnRadiusMeters = 150.0f;
 
-	UPROPERTY(Config, EditAnywhere, Category = "Pedestrians", meta = (ClampMin = "60.0", Units = "m"))
-	float PedestrianDespawnRadiusMeters = 350.0f;
+	/** A full character further away than this turns back into a lightweight figure (a little more than the spawn radius, to avoid flicker). */
+	UPROPERTY(Config, EditAnywhere, Category = "Pedestrians", meta = (ClampMin = "40.0", Units = "m"))
+	float PedestrianDespawnRadiusMeters = 180.0f;
+
+	/** Beyond the character radius and up to this distance, pedestrians are drawn as simple instanced figures. */
+	UPROPERTY(Config, EditAnywhere, Category = "Pedestrians", meta = (ClampMin = "100.0", Units = "m"))
+	float PedestrianImpostorRadiusMeters = 1200.0f;
 
 	/**
 	 * Character blueprints (children of NpcCharacter) used as pedestrian looks - e.g. MetaHuman-based ones.
@@ -62,4 +71,49 @@ public:
 	 */
 	UPROPERTY(Config, EditAnywhere, Category = "Pedestrians")
 	TArray<TSoftClassPtr<ANpcCharacter>> PedestrianClasses;
+
+	// --- Transit network (static BKK GTFS: lines, tracks, stops) ---
+
+	/** Baked by Tools/Transit/bake_gtfs.py, relative to the Content folder. */
+	UPROPERTY(Config, EditAnywhere, Category = "Transit Network")
+	FString TransitFile = TEXT("Data/district8_transit.bsb");
+
+	UPROPERTY(Config, EditAnywhere, Category = "Transit Network")
+	bool bShowTramTracks = true;
+
+	UPROPERTY(Config, EditAnywhere, Category = "Transit Network")
+	bool bShowBusRoutes = false;
+
+	UPROPERTY(Config, EditAnywhere, Category = "Transit Network")
+	bool bShowStops = true;
+
+	/** Keep live trams and buses on their real route line instead of raw (noisy) GPS positions. */
+	UPROPERTY(Config, EditAnywhere, Category = "Transit Network")
+	bool bSnapVehiclesToRoutes = true;
+
+	// --- City detail ---
+
+	/** Windows, ground-floor band and cornices on building walls; some windows light up at night. */
+	UPROPERTY(Config, EditAnywhere, Category = "City")
+	bool bFacadeDetail = true;
+
+	/** Solid buildings: the player and bullets cannot pass through walls. */
+	UPROPERTY(Config, EditAnywhere, Category = "City")
+	bool bBuildingCollision = true;
+
+	UPROPERTY(Config, EditAnywhere, Category = "City")
+	bool bStreetLamps = true;
+
+	UPROPERTY(Config, EditAnywhere, Category = "City", meta = (ClampMin = "10.0", Units = "m"))
+	float StreetLampSpacingMeters = 32.0f;
+
+	/** Real lights are expensive: only the lamps nearest the camera actually cast light. */
+	UPROPERTY(Config, EditAnywhere, Category = "City", meta = (ClampMin = "0", ClampMax = "256"))
+	int32 MaxLampLights = 48;
+
+	// --- Player ---
+
+	/** Start the game walking at street level (with weapons). Otherwise start in the flying camera. */
+	UPROPERTY(Config, EditAnywhere, Category = "Player")
+	bool bStartOnFoot = true;
 };

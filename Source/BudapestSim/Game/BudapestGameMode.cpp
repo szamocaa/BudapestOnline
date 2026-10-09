@@ -1,11 +1,16 @@
 #include "Game/BudapestGameMode.h"
 
 #include "City/DistrictBuildings.h"
-#include "Engine/Engine.h"
+#include "City/StreetLamps.h"
 #include "EngineUtils.h"
+#include "Game/BudapestCharacter.h"
+#include "Game/BudapestHUD.h"
 #include "Game/BudapestPawn.h"
+#include "Game/BudapestPlayerController.h"
 #include "Npc/NpcManager.h"
 #include "Transit/TransitManager.h"
+#include "Transit/TransitNetwork.h"
+#include "World/BudapestWorldSettings.h"
 #include "World/DayCycleActor.h"
 
 namespace
@@ -24,8 +29,10 @@ namespace
 
 ABudapestGameMode::ABudapestGameMode()
 {
-	PrimaryActorTick.bCanEverTick = true;
-	DefaultPawnClass = ABudapestPawn::StaticClass();
+	const UBudapestWorldSettings* Settings = GetDefault<UBudapestWorldSettings>();
+	DefaultPawnClass = Settings->bStartOnFoot ? ABudapestCharacter::StaticClass() : ABudapestPawn::StaticClass();
+	PlayerControllerClass = ABudapestPlayerController::StaticClass();
+	HUDClass = ABudapestHUD::StaticClass();
 }
 
 void ABudapestGameMode::BeginPlay()
@@ -38,39 +45,11 @@ void ABudapestGameMode::BeginPlay()
 		return;
 	}
 
-	// Order matters: the sky first, then the city, then the things that live in it.
+	// Order matters: sky first, then the city and its networks, then the things that live in it.
 	DayCycle = FindOrSpawn<ADayCycleActor>(World);
 	City = FindOrSpawn<ADistrictBuildings>(World);
+	TransitNetwork = FindOrSpawn<ATransitNetwork>(World);
 	Transit = FindOrSpawn<ATransitManager>(World);
 	Pedestrians = FindOrSpawn<ANpcManager>(World);
-}
-
-void ABudapestGameMode::Tick(float DeltaSeconds)
-{
-	Super::Tick(DeltaSeconds);
-	ShowStatus();
-}
-
-void ABudapestGameMode::ShowStatus() const
-{
-	if (GEngine == nullptr)
-	{
-		return;
-	}
-
-	const FString Clock = DayCycle != nullptr ? DayCycle->GetClockString() : FString(TEXT("--:--"));
-	const float Scale = DayCycle != nullptr ? DayCycle->GetTimeScale() : 1.0f;
-	const float SunElevation = DayCycle != nullptr ? DayCycle->GetSunElevationDegrees() : 0.0f;
-
-	GEngine->AddOnScreenDebugMessage(7401, 0.0f, FColor::White,
-		FString::Printf(TEXT("Budapest VIII. district  |  %s  |  time x%g  |  sun %+.0f deg"), *Clock, Scale, SunElevation));
-
-	const TCHAR* FeedMode = (Transit != nullptr && !Transit->IsUsingMockFeed()) ? TEXT("LIVE BKK data") : TEXT("SIMULATED (set BKK_API_KEY for live data)");
-	GEngine->AddOnScreenDebugMessage(7402, 0.0f, FColor::Cyan,
-		FString::Printf(TEXT("Transit: %s, %d vehicles  |  Pedestrians: %d  |  Buildings: %d"), FeedMode,
-			Transit != nullptr ? Transit->GetVehicleCount() : 0, Pedestrians != nullptr ? Pedestrians->GetActiveCount() : 0,
-			City != nullptr ? City->GetBuildingCount() : 0));
-
-	GEngine->AddOnScreenDebugMessage(7403, 0.0f, FColor::Silver,
-		TEXT("WASD + mouse fly, Q/E down/up, G street level, comma/period slower/faster clock, T real time"));
+	StreetLamps = FindOrSpawn<AStreetLamps>(World);
 }

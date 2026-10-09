@@ -1,18 +1,56 @@
 #include "Npc/NpcManager.h"
 
 #include "BudapestSim.h"
+#include "Camera/PlayerCameraManager.h"
+#include "Components/InstancedStaticMeshComponent.h"
+#include "Engine/StaticMesh.h"
+#include "Engine/World.h"
 #include "EngineUtils.h"
+#include "Game/BudapestGameMode.h"
+#include "GameFramework/Pawn.h"
+#include "HAL/PlatformTime.h"
 #include "Kismet/GameplayStatics.h"
+#include "Materials/MaterialInstanceDynamic.h"
+#include "Materials/MaterialInterface.h"
 #include "Misc/Paths.h"
 #include "Npc/NpcCharacter.h"
 #include "Transit/BkkTransitSettings.h"
 #include "World/BudapestWorldSettings.h"
 #include "World/DayCycleActor.h"
 
+#include <vector>
+
 ANpcManager::ANpcManager()
 {
 	PrimaryActorTick.bCanEverTick = true;
-	PrimaryActorTick.TickInterval = 0.5f; // the crowd is topped up twice a second, individuals tick themselves
+	PrimaryActorTick.TickInterval = 0.1f; // crowd and level of detail ten times a second; characters tick themselves
+
+	// Distant pedestrians: one instance each, no collision, no shadows (they are at least 150 m away).
+	Impostors = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("Impostors"));
+	Impostors->SetMobility(EComponentMobility::Movable);
+	Impostors->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	Impostors->SetGenerateOverlapEvents(false);
+	Impostors->SetCanEverAffectNavigation(false);
+	Impostors->SetCastShadow(false);
+	SetRootComponent(Impostors);
+}
+
+ANpcManager* ANpcManager::Get(const UObject* WorldContextObject)
+{
+	UWorld* World = WorldContextObject != nullptr ? WorldContextObject->GetWorld() : nullptr;
+	if (World == nullptr)
+	{
+		return nullptr;
+	}
+	if (const ABudapestGameMode* Mode = World->GetAuthGameMode<ABudapestGameMode>())
+	{
+		if (ANpcManager* Found = Mode->GetPedestrians())
+		{
+			return Found;
+		}
+	}
+	TActorIterator<ANpcManager> It(World);
+	return It ? *It : nullptr;
 }
 
 void ANpcManager::BeginPlay()
@@ -21,7 +59,9 @@ void ANpcManager::BeginPlay()
 
 	const UBudapestWorldSettings* Settings = GetDefault<UBudapestWorldSettings>();
 	const UBkkTransitSettings* Geo = GetDefault<UBkkTransitSettings>();
-	Random.Initialize(FPlatformTime::Cycles());
+	const uint32 Seed = FPlatformTime::Cycles();
+	Random.Initialize(static_cast<int32>(Seed & 0x7fffffffu));
+	Crowd.Reset(static_cast<uint64>(Seed));
 
 	if (!Settings->bSpawnPedestrians)
 	{
@@ -36,6 +76,37 @@ void ANpcManager::BeginPlay()
 		return;
 	}
 
+	// Hand the street network to the crowd simulation, each street once.
+	std::vector<BudapestCrowd::FNode> SimNodes;
+	SimNodes.reserve(static_cast<size_t>(Graph.Nodes.Num()));
+	for (const FVector& Point : Graph.Nodes)
+	{
+		BudapestCrowd::FNode Node;
+		Node.X = Point.X;
+		Node.Y = Point.Y;
+		SimNodes.push_back(Node);
+	}
+	std::vector<BudapestCrowd::FEdge> SimEdges;
+	for (int32 From = 0; From < Graph.Adjacency.Num(); ++From)
+	{
+		for (const FPedestrianGraph::FEdge& Street : Graph.Adjacency[From])
+		{
+			if (From < Street.To)
+			{
+				BudapestCrowd::FEdge Edge;
+				Edge.A = From;
+				Edge.B = Street.To;
+				Edge.Class = Street.Class;
+				SimEdges.push_back(Edge);
+			}
+		}
+	}
+	Crowd.SetGraph(SimNodes, SimEdges);
+
+	BudapestCrowd::FSimSettings SimSettings = Crowd.GetSettings();
+	SimSettings.PanicSeconds = static_cast<double>(PanicSeconds);
+	Crowd.SetSettings(SimSettings);
+
 	for (const TSoftClassPtr<ANpcCharacter>& Soft : Settings->PedestrianClasses)
 	{
 		if (UClass* Loaded = Soft.LoadSynchronous())
@@ -47,180 +118,440 @@ void ANpcManager::BeginPlay()
 			UE_LOG(LogBudapestSim, Warning, TEXT("Pedestrian class could not be loaded: %s"), *Soft.ToString());
 		}
 	}
-	UE_LOG(LogBudapestSim, Log, TEXT("Pedestrians: %d custom look(s)%s"), LookClasses.Num(), LookClasses.IsEmpty() ? TEXT(" - using placeholder figures") : TEXT(""));
 
-	for (TActorIterator<ADayCycleActor> It(GetWorld()); It; ++It)
+	UStaticMesh* Cylinder = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cylinder.Cylinder"));
+	UMaterialInterface* BaseMaterial = LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
+	if (Cylinder != nullptr)
 	{
-		DayCycle = *It;
-		break;
+		Impostors->SetStaticMesh(Cylinder);
+		if (BaseMaterial != nullptr)
+		{
+			UMaterialInstanceDynamic* Material = UMaterialInstanceDynamic::Create(BaseMaterial, this);
+			Material->SetVectorParameterValue(TEXT("Color"), ImpostorColor);
+			Impostors->SetMaterial(0, Material);
+		}
 	}
+
+	if (const ABudapestGameMode* Mode = GetWorld()->GetAuthGameMode<ABudapestGameMode>())
+	{
+		DayCycle = Mode->GetDayCycle();
+	}
+	if (!DayCycle.IsValid())
+	{
+		TActorIterator<ADayCycleActor> It(GetWorld());
+		if (It)
+		{
+			DayCycle = *It;
+		}
+	}
+
+	// Start with the streets as full as they should be right now, everywhere (the camera too).
+	const float Hour = DayCycle.IsValid() ? DayCycle->GetLocalHours() : 12.0f;
+	Crowd.SetTarget(FMath::RoundToInt(static_cast<float>(Settings->MaxDistrictPedestrians) * DensityForHour(Hour)), true);
+	bCrowdReady = true;
+
+	UE_LOG(LogBudapestSim, Log, TEXT("Pedestrians: %d out across the district now (peak %d), %d custom look(s)%s"),
+		Crowd.GetAliveCount(), Settings->MaxDistrictPedestrians, LookClasses.Num(), LookClasses.IsEmpty() ? TEXT(" - using placeholder figures") : TEXT(""));
 }
 
 void ANpcManager::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
-	UpdatePopulation();
+
+	UWorld* World = GetWorld();
+	if (!bCrowdReady || World == nullptr)
+	{
+		return;
+	}
+
+	// Step by the game time actually elapsed (robust whatever the tick interval does to DeltaSeconds).
+	const double Now = World->GetTimeSeconds();
+	const double Elapsed = LastStepTime < 0.0 ? static_cast<double>(DeltaSeconds) : Now - LastStepTime;
+	LastStepTime = Now;
+
+	UpdatePopulationTarget();
+
+	FVector View = FVector::ZeroVector;
+	const bool bHasView = FindViewLocation(View);
+	if (bHasView)
+	{
+		// Nobody appears out of thin air, or vanishes, where the camera can see them as characters.
+		const float QuietRadiusMeters = GetDefault<UBudapestWorldSettings>()->PedestrianDespawnRadiusMeters;
+		Crowd.SetQuietZone(View.X, View.Y, static_cast<double>(QuietRadiusMeters) * 100.0);
+	}
+	else
+	{
+		Crowd.SetQuietZone(0.0, 0.0, 0.0);
+	}
+	Crowd.Step(Elapsed);
+
+	if (!bHasView)
+	{
+		return;
+	}
+	const bool bLevelOfDetailChanged = UpdateCharacters(View);
+	// Refresh the distant figures a few times a second, and at once when someone became (or stopped being)
+	// a character, so nobody is drawn twice or disappears for a moment.
+	if (bLevelOfDetailChanged || Now - LastImpostorTime >= static_cast<double>(ImpostorUpdateInterval))
+	{
+		UpdateImpostors(View);
+		LastImpostorTime = Now;
+	}
 }
 
-void ANpcManager::UpdatePopulation()
+void ANpcManager::UpdatePopulationTarget()
 {
-	UWorld* World = GetWorld();
-	APawn* Player = World != nullptr ? UGameplayStatics::GetPlayerPawn(World, 0) : nullptr;
-	if (Player == nullptr || !Graph.IsValid())
+	if (!DayCycle.IsValid())
+	{
+		if (const ABudapestGameMode* Mode = GetWorld()->GetAuthGameMode<ABudapestGameMode>())
+		{
+			DayCycle = Mode->GetDayCycle();
+		}
+	}
+	const UBudapestWorldSettings* Settings = GetDefault<UBudapestWorldSettings>();
+	const float Hour = DayCycle.IsValid() ? DayCycle->GetLocalHours() : 12.0f;
+	Crowd.SetTarget(FMath::RoundToInt(static_cast<float>(Settings->MaxDistrictPedestrians) * DensityForHour(Hour)));
+}
+
+bool ANpcManager::UpdateCharacters(const FVector& View)
+{
+	const UBudapestWorldSettings* Settings = GetDefault<UBudapestWorldSettings>();
+	const double DespawnRadius = static_cast<double>(FMath::Max(Settings->PedestrianDespawnRadiusMeters, 40.0f)) * 100.0;
+	const double SpawnRadius = FMath::Min(static_cast<double>(Settings->PedestrianSpawnRadiusMeters) * 100.0, DespawnRadius - 1000.0);
+	const int32 MaxCharacters = FMath::Max(Settings->MaxPedestrians, 0);
+	bool bChanged = false;
+
+	// Forget characters that vanished; hand back the ones the camera has left behind.
+	for (int32 Index = Npcs.Num() - 1; Index >= 0; --Index)
+	{
+		ANpcCharacter* Npc = Npcs[Index];
+		if (!IsValid(Npc) || Npc->IsDead())
+		{
+			// Destroyed by something else (fell out of the world, ...): that person has left the crowd too.
+			Crowd.Kill(NpcAgents[Index]);
+			Npcs.RemoveAtSwap(Index);
+			NpcAgents.RemoveAtSwap(Index);
+			bChanged = true;
+		}
+		else if ((Npc->GetActorLocation() - View).SizeSquared() > DespawnRadius * DespawnRadius)
+		{
+			HandBack(Index);
+			bChanged = true;
+		}
+	}
+
+	// Too many (MaxPedestrians lowered while running): the farthest go back to the simulation.
+	while (Npcs.Num() > MaxCharacters)
+	{
+		double FarthestDistanceSq = 0.0;
+		HandBack(FindFarthestNpc(View, FarthestDistanceSq));
+		bChanged = true;
+	}
+
+	// Walkers within the character radius, closest first.
+	struct FCandidate
+	{
+		double DistanceSq = 0.0;
+		int32 Agent = INDEX_NONE;
+	};
+	TArray<FCandidate> Candidates;
+	const double SpawnRadiusSq = SpawnRadius * SpawnRadius;
+	const double HeightSq = FMath::Square(View.Z);
+	for (int32 Agent = 0; Agent < Crowd.GetSlotCount(); ++Agent)
+	{
+		const BudapestCrowd::FAgent* Walker = Crowd.GetAgent(Agent);
+		BudapestCrowd::FPose Pose;
+		if (Walker == nullptr || Walker->bControlled || !Crowd.GetPose(Agent, Pose))
+		{
+			continue;
+		}
+		const double DistanceSq = FMath::Square(Pose.X - View.X) + FMath::Square(Pose.Y - View.Y) + HeightSq;
+		if (DistanceSq <= SpawnRadiusSq)
+		{
+			FCandidate Candidate;
+			Candidate.DistanceSq = DistanceSq;
+			Candidate.Agent = Agent;
+			Candidates.Add(Candidate);
+		}
+	}
+	Candidates.Sort([](const FCandidate& Left, const FCandidate& Right) { return Left.DistanceSq < Right.DistanceSq; });
+
+	int32 Spawned = 0;
+	int32 Swaps = 0;
+	for (const FCandidate& Candidate : Candidates)
+	{
+		if (Spawned >= MaxSpawnsPerUpdate)
+		{
+			break;
+		}
+		if (Npcs.Num() >= MaxCharacters)
+		{
+			// Full: trade the farthest character for this walker if it is clearly (20 m) closer, so the people
+			// nearest the camera are always the detailed ones. A couple per update is plenty.
+			double FarthestDistanceSq = 0.0;
+			const int32 Farthest = FindFarthestNpc(View, FarthestDistanceSq);
+			if (MaxCharacters == 0 || Swaps >= 2 || Farthest == INDEX_NONE ||
+				FMath::Sqrt(Candidate.DistanceSq) + 2000.0 >= FMath::Sqrt(FarthestDistanceSq))
+			{
+				break;
+			}
+			HandBack(Farthest);
+			++Swaps;
+			bChanged = true;
+		}
+		if (SpawnCharacter(Candidate.Agent))
+		{
+			++Spawned;
+			bChanged = true;
+		}
+	}
+	return bChanged;
+}
+
+bool ANpcManager::SpawnCharacter(int32 Agent)
+{
+	const BudapestCrowd::FAgent* Found = Crowd.GetAgent(Agent);
+	BudapestCrowd::FPose Pose;
+	if (Found == nullptr || Found->bControlled || !Crowd.GetPose(Agent, Pose))
+	{
+		return false;
+	}
+	const BudapestCrowd::FAgent Walker = *Found;
+
+	UClass* Look = ANpcCharacter::StaticClass();
+	if (!LookClasses.IsEmpty())
+	{
+		// The look follows the person's seed, so whoever walks past again looks the same.
+		UClass* Chosen = LookClasses[static_cast<int32>(Walker.Seed % static_cast<uint32>(LookClasses.Num()))].Get();
+		Look = Chosen != nullptr ? Chosen : Look;
+	}
+
+	// Same place, direction, street, speed, pavement and look as the simulated walker.
+	const double Yaw = FMath::RadiansToDegrees(FMath::Atan2(Pose.DirY, Pose.DirX));
+	const FTransform SpawnTransform(FRotator(0.0, Yaw, 0.0), FVector(Pose.X, Pose.Y, 92.0));
+	ANpcCharacter* Npc = GetWorld()->SpawnActorDeferred<ANpcCharacter>(Look, SpawnTransform, nullptr, nullptr, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
+	if (Npc == nullptr)
+	{
+		return false;
+	}
+
+	FNpcWalkState State;
+	State.Agent = Agent;
+	State.FromNode = Walker.From;
+	State.ToNode = Walker.To;
+	State.SpeedCmPerSec = static_cast<float>(Walker.Speed);
+	State.Seed = static_cast<int32>(Walker.Seed);
+	State.SideSign = static_cast<float>(Walker.Side);
+	State.OffsetJitter = static_cast<float>(Walker.OffsetJitter);
+	State.PanicSeconds = static_cast<float>(Walker.PanicSeconds);
+	State.ThreatLocation = FVector(Walker.ThreatX, Walker.ThreatY, 0.0);
+	Npc->InitNpc(this, State, FVector(Pose.X, Pose.Y, 0.0), Yaw);
+	Npc->FinishSpawning(SpawnTransform);
+	if (!IsValid(Npc))
+	{
+		return false;
+	}
+
+	Crowd.Detach(Agent);
+	Npcs.Add(Npc);
+	NpcAgents.Add(Agent);
+	return true;
+}
+
+void ANpcManager::HandBack(int32 NpcIndex)
+{
+	if (!Npcs.IsValidIndex(NpcIndex))
+	{
+		return;
+	}
+	ANpcCharacter* Npc = Npcs[NpcIndex];
+	const int32 Agent = NpcAgents[NpcIndex];
+
+	// The walker carries on from where the character is: same street, pavement, and any panic.
+	bool bAttached = false;
+	FNpcWalkState State;
+	if (IsValid(Npc) && Npc->GetWalkState(State))
+	{
+		const FVector Location = Npc->GetActorLocation();
+		BudapestCrowd::FHandBack Back;
+		Back.From = State.FromNode;
+		Back.To = State.ToNode;
+		if (Crowd.ProjectOntoEdge(Back.From, Back.To, Location.X, Location.Y, Back.Distance))
+		{
+			Back.Side = static_cast<double>(State.SideSign);
+			Back.PanicSeconds = static_cast<double>(State.PanicSeconds);
+			Back.ThreatX = State.ThreatLocation.X;
+			Back.ThreatY = State.ThreatLocation.Y;
+			bAttached = Crowd.Attach(Agent, Back);
+		}
+	}
+	if (!bAttached)
+	{
+		Crowd.Kill(Agent); // lost track of the street: the population refills elsewhere
+	}
+
+	if (IsValid(Npc))
+	{
+		Npc->Destroy();
+	}
+	Npcs.RemoveAtSwap(NpcIndex);
+	NpcAgents.RemoveAtSwap(NpcIndex);
+}
+
+int32 ANpcManager::FindFarthestNpc(const FVector& View, double& OutDistanceSq) const
+{
+	int32 Farthest = INDEX_NONE;
+	OutDistanceSq = -1.0;
+	for (int32 Index = 0; Index < Npcs.Num(); ++Index)
+	{
+		const ANpcCharacter* Npc = Npcs[Index];
+		const double DistanceSq = IsValid(Npc) ? (Npc->GetActorLocation() - View).SizeSquared() : TNumericLimits<double>::Max();
+		if (DistanceSq > OutDistanceSq)
+		{
+			OutDistanceSq = DistanceSq;
+			Farthest = Index;
+		}
+	}
+	return Farthest;
+}
+
+void ANpcManager::UpdateImpostors(const FVector& View)
+{
+	if (Impostors == nullptr || Impostors->GetStaticMesh() == nullptr)
 	{
 		return;
 	}
 
 	const UBudapestWorldSettings* Settings = GetDefault<UBudapestWorldSettings>();
-	const FVector Center = Player->GetActorLocation();
-	const float DespawnRadius = Settings->PedestrianDespawnRadiusMeters * 100.0f;
-	const float SpawnRadius = FMath::Min(Settings->PedestrianSpawnRadiusMeters * 100.0f, DespawnRadius - 500.0f);
+	const double Radius = static_cast<double>(Settings->PedestrianImpostorRadiusMeters) * 100.0;
+	const double RadiusSq = Radius * Radius;
+	const double HeightSq = FMath::Square(View.Z);
 
-	// Forget the dead and remove walkers the player has left behind.
-	for (int32 Index = Npcs.Num() - 1; Index >= 0; --Index)
+	ImpostorTransforms.Reset();
+	for (int32 Agent = 0; Agent < Crowd.GetSlotCount(); ++Agent)
 	{
-		ANpcCharacter* Npc = Npcs[Index];
-		if (!IsValid(Npc))
-		{
-			Npcs.RemoveAtSwap(Index);
-		}
-		else if (FVector::Dist2D(Npc->GetActorLocation(), Center) > DespawnRadius)
-		{
-			Npc->Destroy();
-			Npcs.RemoveAtSwap(Index);
-		}
-	}
-
-	const float Hour = DayCycle.IsValid() ? DayCycle->GetLocalHours() : 12.0f;
-	const int32 Desired = FMath::RoundToInt(static_cast<float>(Settings->MaxPedestrians) * DensityForHour(Hour));
-
-	// Grow or shrink gradually so the street never visibly pops.
-	if (Npcs.Num() < Desired)
-	{
-		for (int32 Added = 0; Added < 6 && Npcs.Num() < Desired; ++Added)
-		{
-			if (!SpawnOne(Center, 800.0f, SpawnRadius))
-			{
-				break;
-			}
-		}
-	}
-	else if (Npcs.Num() > Desired)
-	{
-		for (int32 Removed = 0; Removed < 3 && Npcs.Num() > Desired; ++Removed)
-		{
-			int32 FarthestIndex = 0;
-			double FarthestDistance = -1.0;
-			for (int32 Index = 0; Index < Npcs.Num(); ++Index)
-			{
-				const double Distance = FVector::Dist2D(Npcs[Index]->GetActorLocation(), Center);
-				if (Distance > FarthestDistance)
-				{
-					FarthestDistance = Distance;
-					FarthestIndex = Index;
-				}
-			}
-			Npcs[FarthestIndex]->Destroy();
-			Npcs.RemoveAtSwap(FarthestIndex);
-		}
-	}
-}
-
-bool ANpcManager::SpawnOne(const FVector& Center, float MinDistance, float MaxDistance)
-{
-	for (int32 Attempt = 0; Attempt < 40; ++Attempt)
-	{
-		const int32 Node = Random.RandRange(0, Graph.Nodes.Num() - 1);
-		const double Distance = FVector::Dist2D(Graph.Nodes[Node], Center);
-		if (Distance < MinDistance || Distance > MaxDistance || Graph.Adjacency[Node].IsEmpty())
+		const BudapestCrowd::FAgent* Walker = Crowd.GetAgent(Agent);
+		BudapestCrowd::FPose Pose;
+		if (Walker == nullptr || Walker->bControlled || !Crowd.GetPose(Agent, Pose))
 		{
 			continue;
 		}
-
-		UClass* Look = ANpcCharacter::StaticClass();
-		if (!LookClasses.IsEmpty())
+		if (FMath::Square(Pose.X - View.X) + FMath::Square(Pose.Y - View.Y) + HeightSq > RadiusSq)
 		{
-			Look = LookClasses[Random.RandRange(0, LookClasses.Num() - 1)].Get();
+			continue;
 		}
+		// The engine cylinder is 1 m across and 1 m tall around its centre: scaled to a 45 cm wide,
+		// 1.65-1.85 m tall figure standing on the ground.
+		const double FigureHeight = 175.0 * (0.94 + 0.12 * static_cast<double>(Walker->Seed % 1000u) / 1000.0);
+		const double Yaw = FMath::RadiansToDegrees(FMath::Atan2(Pose.DirY, Pose.DirX));
+		ImpostorTransforms.Emplace(FRotator(0.0, Yaw, 0.0), FVector(Pose.X, Pose.Y, FigureHeight * 0.5), FVector(0.45, 0.45, FigureHeight / 100.0));
+	}
+	VisibleImpostors = ImpostorTransforms.Num();
 
-		const FTransform SpawnTransform(FRotator::ZeroRotator, FVector(Graph.Nodes[Node].X, Graph.Nodes[Node].Y, 100.0));
-		ANpcCharacter* Npc = GetWorld()->SpawnActorDeferred<ANpcCharacter>(Look, SpawnTransform, nullptr, nullptr, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
-		if (Npc == nullptr)
+	// The instance count only ever grows, in blocks; spare instances are parked, tiny, deep under the camera.
+	const FTransform Parked(FRotator::ZeroRotator, FVector(View.X, View.Y, -100000.0), FVector(0.001));
+	if (VisibleImpostors > ImpostorPoolSize)
+	{
+		const int32 NewPoolSize = (VisibleImpostors / 256 + 1) * 256;
+		for (int32 Added = ImpostorPoolSize; Added < NewPoolSize; ++Added)
 		{
-			return false;
+			Impostors->AddInstance(Parked, true);
 		}
-		Npc->InitNpc(this, Node, NextSeed++);
-		Npc->FinishSpawning(SpawnTransform);
-		Npcs.Add(Npc);
+		ImpostorPoolSize = NewPoolSize;
+	}
+	while (ImpostorTransforms.Num() < ImpostorPoolSize)
+	{
+		ImpostorTransforms.Add(Parked);
+	}
+	if (ImpostorPoolSize > 0)
+	{
+		Impostors->BatchUpdateInstancesTransforms(0, ImpostorTransforms, true, true, true);
+	}
+}
+
+bool ANpcManager::FindViewLocation(FVector& OutLocation) const
+{
+	UWorld* World = GetWorld();
+	if (World == nullptr)
+	{
+		return false;
+	}
+	if (const APlayerCameraManager* Camera = UGameplayStatics::GetPlayerCameraManager(World, 0))
+	{
+		OutLocation = Camera->GetCameraLocation();
+		return true;
+	}
+	if (const APawn* Player = UGameplayStatics::GetPlayerPawn(World, 0))
+	{
+		OutLocation = Player->GetActorLocation();
 		return true;
 	}
 	return false;
 }
 
+void ANpcManager::ReportGunshot(const FVector& Location, float AlarmRadiusCm)
+{
+	if (!bCrowdReady || !(AlarmRadiusCm > 0.0f))
+	{
+		return;
+	}
+
+	Crowd.Flee(Location.X, Location.Y, static_cast<double>(AlarmRadiusCm));
+
+	const double RadiusSq = FMath::Square(static_cast<double>(AlarmRadiusCm));
+	for (ANpcCharacter* Npc : Npcs)
+	{
+		if (IsValid(Npc) && (Npc->GetActorLocation() - Location).SizeSquared2D() <= RadiusSq)
+		{
+			Npc->Flee(Location, PanicSeconds * (0.85f + 0.3f * Random.FRand()));
+		}
+	}
+}
+
+void ANpcManager::NotifyNpcDied(ANpcCharacter* Npc)
+{
+	for (int32 Index = 0; Index < Npcs.Num(); ++Index)
+	{
+		if (Npcs[Index].Get() == Npc)
+		{
+			Crowd.Kill(NpcAgents[Index]);
+			Npcs.RemoveAtSwap(Index);
+			NpcAgents.RemoveAtSwap(Index);
+			break;
+		}
+	}
+
+	// Anyone who saw it happen runs, shot heard or not.
+	if (Npc != nullptr && WitnessRadiusCm > 0.0f)
+	{
+		ReportGunshot(Npc->GetActorLocation(), WitnessRadiusCm);
+	}
+}
+
+bool ANpcManager::FindNearestNode(const FVector& Location, int32& OutNode) const
+{
+	const int32 Node = Crowd.FindNearestNode(Location.X, Location.Y);
+	if (Node < 0)
+	{
+		return false;
+	}
+	OutNode = Node;
+	return true;
+}
+
 int32 ANpcManager::PickNextNode(int32 From, int32 Current, FRandomStream& Rng) const
 {
-	if (!Graph.Adjacency.IsValidIndex(Current) || Graph.Adjacency[Current].IsEmpty())
-	{
-		return INDEX_NONE;
-	}
+	const int32 Next = Crowd.PickNextNode(From, Current, static_cast<double>(Rng.FRand()));
+	return Next >= 0 ? Next : INDEX_NONE;
+}
 
-	// Busier streets draw more foot traffic than footpaths and back lanes.
-	static const float ClassWeights[] = { 1.0f, 2.0f, 3.0f };
-	const TArray<FPedestrianGraph::FEdge>& Edges = Graph.Adjacency[Current];
-
-	float Total = 0.0f;
-	for (const FPedestrianGraph::FEdge& Edge : Edges)
-	{
-		if (Edge.To != From)
-		{
-			Total += ClassWeights[FMath::Min<int32>(Edge.Class, 2)];
-		}
-	}
-	if (Total <= 0.0f)
-	{
-		return From != INDEX_NONE ? From : Edges[0].To; // dead end: turn around
-	}
-
-	float Pick = Rng.FRand() * Total;
-	for (const FPedestrianGraph::FEdge& Edge : Edges)
-	{
-		if (Edge.To == From)
-		{
-			continue;
-		}
-		Pick -= ClassWeights[FMath::Min<int32>(Edge.Class, 2)];
-		if (Pick <= 0.0f)
-		{
-			return Edge.To;
-		}
-	}
-	// Floating-point leftovers: take the last edge that is not the way we came.
-	for (int32 Index = Edges.Num() - 1; Index >= 0; --Index)
-	{
-		if (Edges[Index].To != From)
-		{
-			return Edges[Index].To;
-		}
-	}
-	return Edges[0].To;
+int32 ANpcManager::PickFleeNode(int32 From, int32 Current, const FVector& ThreatLocation, FRandomStream& Rng) const
+{
+	const int32 Next = Crowd.PickFleeNode(From, Current, ThreatLocation.X, ThreatLocation.Y, static_cast<double>(Rng.FRand()));
+	return Next >= 0 ? Next : INDEX_NONE;
 }
 
 float ANpcManager::DensityForHour(float Hour)
 {
-	// Fraction of the peak population out at each local hour: quiet nights, rush hours around 8 and 17, a lunch bump.
-	static const float Hourly[24] =
-	{
-		0.04f, 0.03f, 0.02f, 0.02f, 0.03f, 0.07f, // 00-05
-		0.18f, 0.50f, 0.90f, 0.70f, 0.60f, 0.65f, // 06-11
-		0.85f, 0.80f, 0.65f, 0.65f, 0.80f, 1.00f, // 12-17
-		0.95f, 0.80f, 0.60f, 0.45f, 0.30f, 0.15f, // 18-23
-	};
-
-	float Wrapped = FMath::Fmod(Hour, 24.0f);
-	if (Wrapped < 0.0f)
-	{
-		Wrapped += 24.0f;
-	}
-	const int32 Index = FMath::Clamp(FMath::FloorToInt(Wrapped), 0, 23);
-	return FMath::Lerp(Hourly[Index], Hourly[(Index + 1) % 24], Wrapped - static_cast<float>(Index));
+	return BudapestCrowd::DensityForHour(Hour);
 }

@@ -24,3 +24,6 @@ Tools/Districts/raw/
 # Python
 __pycache__/
 *.pyc
+
+# Your BKK API key (Project folder/BkkApiKey.txt). Never commit it.
+BkkApiKey.txt
