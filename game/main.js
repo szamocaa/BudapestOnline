@@ -314,10 +314,11 @@ async function main() {
 		$('loading').style.display = 'none';
 		$('hud').classList.add('on');
 		player.lock();
-		if (!localStorage.getItem('bo-help-seen')) {
+		let seen = false;
+		try { seen = !!localStorage.getItem('bo-help-seen'); localStorage.setItem('bo-help-seen', '1'); } catch { /* storage blocked */ }
+		if (!seen) {
 			$('help').style.display = 'flex';
 			setTimeout(() => ($('help').style.display = 'none'), 7000);
-			try { localStorage.setItem('bo-help-seen', '1'); } catch { /* ignore */ }
 		}
 		toast('Blaha Lujza tér. A villamosok és buszok a megállókban állnak meg – E-vel szállsz fel.');
 	};
