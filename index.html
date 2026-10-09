@@ -24,10 +24,8 @@
 	#dangerBar i { display: block; height: 100%; width: 0; border-radius: 3px; transition: width .5s, background .5s; }
 	#topRight { position: absolute; right: 14px; top: 14px; min-width: 200px; text-align: right; }
 	#money { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
-	#healthBar, #staminaBar { height: 7px; background: rgba(255,255,255,.12); border-radius: 4px; overflow: hidden; margin: 6px 0 2px; }
+	#healthBar { height: 7px; background: rgba(255,255,255,.12); border-radius: 4px; overflow: hidden; margin: 6px 0 2px; }
 	#healthBar i { display: block; height: 100%; background: linear-gradient(90deg, #e5484d, #7bd389); }
-	#staminaBar { height: 4px; }
-	#staminaBar i { display: block; height: 100%; background: #6cb4ff; }
 	#items, #dataSrc { color: var(--muted); font-size: 12px; margin-top: 4px; }
 	#dataSrc b { color: var(--text); }
 	#prompt { position: absolute; left: 50%; bottom: 120px; transform: translateX(-50%); font-size: 17px; font-weight: 600; display: none; white-space: nowrap; }
@@ -83,7 +81,6 @@
 	<div id="topRight" class="panel">
 		<div id="money">0 Ft</div>
 		<div id="healthBar"><i></i></div>
-		<div id="staminaBar"><i></i></div>
 		<div id="items"></div>
 		<div id="dataSrc"></div>
 	</div>
@@ -104,7 +101,7 @@
 		<h2 style="margin-top:0">Irányítás</h2>
 		<table>
 			<tr><td><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></td><td>séta (egér: körülnézés)</td></tr>
-			<tr><td><kbd>Shift</kbd></td><td>futás</td></tr>
+			<tr><td><kbd>Shift</kbd></td><td>sprint (korlátlan, nagyon gyors)</td></tr>
 			<tr><td><kbd>E</kbd></td><td>fel-/leszállás, metró lejárat, vásárlás</td></tr>
 			<tr><td><kbd>1</kbd>–<kbd>4</kbd></td><td>válasz, ha leszólítanak</td></tr>
 			<tr><td><kbd>M</kbd></td><td>térkép nagyítása</td></tr>

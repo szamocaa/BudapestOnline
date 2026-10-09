@@ -538,7 +538,6 @@ async function main() {
 		bar.style.background = lab.colour;
 		$('money').textContent = fmtFt(player.money);
 		$('healthBar').firstElementChild.style.width = `${Math.max(0, player.health)}%`;
-		$('staminaBar').firstElementChild.style.width = `${Math.round(player.stamina * 100)}%`;
 		$('items').textContent = `Gázspray: ${player.spray} db · Bérlet: Budapest-bérlet`;
 		$('dataSrc').innerHTML = `BKK: <b>${liveStatus}</b><br>Térkép: <b>${city.source === 'fallback' ? 'egyszerűsített' : 'OpenStreetMap'}</b> · Nap ${st.sunEl.toFixed(0)}°`;
 		const board = !ride ? transit.departuresNear(player.x, player.z, unix, budapestHours(unix), clock.dayIndex) : null;

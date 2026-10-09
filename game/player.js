@@ -1,6 +1,9 @@
 // First-person player: walking, running, mouse look, collisions with buildings, riding vehicles.
 import * as THREE from './vendor/three.module.min.js';
 
+export const WALK_SPEED = 1.55; // m/s, a relaxed city walk
+export const SPRINT_SPEED = 15; // m/s while holding Shift - unlimited, no stamina
+
 export class Player {
 	constructor(camera, dom, world) {
 		this.camera = camera;
@@ -22,7 +25,6 @@ export class Player {
 		this.keys = new Set();
 		this.locked = false;
 		this.sensitivity = 0.0022;
-		this.stamina = 1;
 
 		window.addEventListener('keydown', (e) => {
 			this.keys.add(e.code);
@@ -83,9 +85,10 @@ export class Player {
 		fx += this.touchMove.x;
 		fz += this.touchMove.y;
 		const len = Math.hypot(fx, fz);
-		const running = (k.has('ShiftLeft') || k.has('ShiftRight')) && this.stamina > 0.05 && len > 0;
-		this.stamina = Math.max(0, Math.min(1, this.stamina + (running ? -dt / 12 : dt / 20)));
-		const speed = (running ? 5.6 : 1.55) * (this.health < 30 ? 0.7 : 1);
+		// Unlimited stamina: you can run as long as you hold Shift.
+		const running = (k.has('ShiftLeft') || k.has('ShiftRight')) && len > 0;
+		// Sprinting is deliberately superhuman: 15 m/s (54 km/h).
+		const speed = (running ? SPRINT_SPEED : WALK_SPEED) * (this.health < 30 ? 0.7 : 1);
 		let tx = 0, tz = 0;
 		if (len > 0) {
 			const s = Math.sin(this.yaw), c = Math.cos(this.yaw);
@@ -93,18 +96,30 @@ export class Player {
 			tx = ((fx * c + fz * s) / len) * speed;
 			tz = ((-fx * s + fz * c) / len) * speed;
 		}
-		const a = 1 - Math.exp(-dt * 10);
+		const a = 1 - Math.exp(-dt * (running ? 6 : 10));
 		this.vx += (tx - this.vx) * a;
 		this.vz += (tz - this.vz) * a;
-		let nx = this.x + this.vx * dt, nz = this.z + this.vz * dt;
-		if (this.world) [nx, nz] = this.world.collide(nx, nz, 0.35);
-		this.x = nx;
-		this.z = nz;
+		// Move in small steps so even a full-speed sprint can never pass through a wall in one frame.
+		const travel = Math.hypot(this.vx, this.vz) * dt;
+		const steps = Math.max(1, Math.ceil(travel / 0.2));
+		for (let i = 0; i < steps; i++) {
+			let nx = this.x + (this.vx * dt) / steps, nz = this.z + (this.vz * dt) / steps;
+			if (this.world) [nx, nz] = this.world.collide(nx, nz, 0.35);
+			this.x = nx;
+			this.z = nz;
+		}
 		const v = Math.hypot(this.vx, this.vz);
 		this.bob += v * dt * 2.1;
 		const bobY = v > 0.3 ? Math.sin(this.bob * 2) * 0.035 * Math.min(1, v / 2) : 0;
+		if (v > WALK_SPEED * 2) this.bob -= v * dt * 1.2; // longer strides, not a frantic shake
 		this.camera.position.set(this.x, this.eye + bobY, this.z);
 		this.camera.rotation.set(this.pitch, this.yaw, 0, 'YXZ');
+		// Widen the view while sprinting for a sense of speed.
+		const fov = 70 + 14 * Math.min(1, Math.max(0, (v - WALK_SPEED) / (SPRINT_SPEED - WALK_SPEED)));
+		if (Math.abs(this.camera.fov - fov) > 0.05) {
+			this.camera.fov += (fov - this.camera.fov) * Math.min(1, dt * 6);
+			this.camera.updateProjectionMatrix();
+		}
 		this.speed = v;
 		this.running = running;
 	}

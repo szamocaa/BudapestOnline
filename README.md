@@ -28,7 +28,7 @@ node tools/bake_snapshot.mjs
 | Gomb | Mit csinál |
 |---|---|
 | W A S D + egér | séta, körülnézés (kattints a képre az egérhez) |
-| Shift | futás |
+| Shift | sprint – korlátlan ideig, 15 m/s (kb. 54 km/h) |
 | E | fel- és leszállás, metrólejáró, vásárlás |
 | 1–4 | válasz, ha leszólítanak |
 | M | térkép nagyítása |
