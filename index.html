@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="hu">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Budapest Online – Józsefváros</title>
+<meta name="description" content="Böngészős játék Budapest VIII. kerületében: valós idő, valós BKK járatok (99, 23, 24, 28A, M2), OpenStreetMap térkép.">
+<style>
+	:root { --panel: rgba(12, 14, 18, 0.72); --line: rgba(255, 255, 255, 0.12); --text: #f2f2f2; --muted: #a9adb5; --accent: #ffd800; }
+	* { box-sizing: border-box; }
+	html, body { margin: 0; height: 100%; background: #0b0c0f; color: var(--text); font: 14px/1.35 system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; overflow: hidden; }
+	canvas#view { display: block; width: 100vw; height: 100vh; }
+	.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+	#hud { position: fixed; inset: 0; pointer-events: none; display: none; }
+	#hud.on { display: block; }
+	#topLeft { position: absolute; left: 14px; top: 14px; min-width: 230px; }
+	#clock { font-size: 34px; font-weight: 700; letter-spacing: 1px; font-variant-numeric: tabular-nums; }
+	#clock small { font-size: 16px; color: var(--muted); margin-left: 4px; }
+	#date, #place { color: var(--muted); }
+	#place b { color: var(--text); font-weight: 600; }
+	#danger { margin-top: 8px; display: flex; align-items: center; gap: 8px; }
+	#dangerText { text-transform: uppercase; letter-spacing: 1px; }
+	#dangerBar { flex: 1; height: 6px; background: rgba(255,255,255,.12); border-radius: 3px; overflow: hidden; }
+	#dangerBar i { display: block; height: 100%; width: 0; border-radius: 3px; transition: width .5s, background .5s; }
+	#topRight { position: absolute; right: 14px; top: 14px; min-width: 200px; text-align: right; }
+	#money { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+	#healthBar, #staminaBar { height: 7px; background: rgba(255,255,255,.12); border-radius: 4px; overflow: hidden; margin: 6px 0 2px; }
+	#healthBar i { display: block; height: 100%; background: linear-gradient(90deg, #e5484d, #7bd389); }
+	#staminaBar { height: 4px; }
+	#staminaBar i { display: block; height: 100%; background: #6cb4ff; }
+	#items, #dataSrc { color: var(--muted); font-size: 12px; margin-top: 4px; }
+	#dataSrc b { color: var(--text); }
+	#prompt { position: absolute; left: 50%; bottom: 120px; transform: translateX(-50%); font-size: 17px; font-weight: 600; display: none; white-space: nowrap; }
+	#prompt kbd, .dialog kbd, #help kbd { display: inline-block; min-width: 22px; padding: 1px 6px; margin-right: 6px; border-radius: 5px; background: #f2f2f2; color: #111; font: 700 13px system-ui; text-align: center; }
+	#board { position: absolute; right: 14px; top: 160px; width: 270px; display: none; }
+	#board h3 { margin: 0 0 6px; font-size: 14px; }
+	#board .row { display: flex; align-items: center; gap: 8px; padding: 3px 0; border-top: 1px solid var(--line); }
+	.badge { display: inline-block; min-width: 36px; padding: 1px 6px; border-radius: 4px; font-weight: 800; text-align: center; color: #000; background: var(--accent); }
+	.badge.bus { background: #009ee3; color: #fff; }
+	.badge.metro { background: #e41f18; color: #fff; }
+	#board .head { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+	#board .min { font-weight: 700; font-variant-numeric: tabular-nums; }
+	#minimap { position: absolute; left: 14px; bottom: 14px; width: 220px; height: 220px; border-radius: 50%; }
+	#toasts { position: absolute; left: 50%; top: 18px; transform: translateX(-50%); display: flex; flex-direction: column; gap: 6px; align-items: center; }
+	.toast { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 7px 12px; animation: fade 5s forwards; }
+	@keyframes fade { 0% { opacity: 0; transform: translateY(-6px); } 8% { opacity: 1; transform: none; } 85% { opacity: 1; } 100% { opacity: 0; } }
+	#crosshair { position: absolute; left: 50%; top: 50%; width: 4px; height: 4px; margin: -2px; border-radius: 50%; background: rgba(255,255,255,.75); box-shadow: 0 0 2px #000; }
+	.dialog { position: absolute; left: 50%; bottom: 150px; transform: translateX(-50%); width: min(520px, 92vw); display: none; pointer-events: auto; }
+	.dialog .who { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 1px; }
+	.dialog .say { font-size: 18px; margin: 4px 0 10px; }
+	.dialog .opt { padding: 4px 0; }
+	#ride { position: absolute; left: 50%; top: 70px; transform: translateX(-50%); display: none; text-align: center; }
+	#ride .badge { font-size: 18px; margin-right: 6px; }
+	#help { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(0,0,0,.6); z-index: 5; }
+	#help .panel { max-width: 560px; }
+	#help td { padding: 3px 10px 3px 0; }
+	#loading { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: radial-gradient(circle at 30% 20%, #20242c, #08090b); z-index: 10; }
+	#loading .card { width: min(560px, 92vw); text-align: center; }
+	#loading h1 { margin: 0; font-size: 40px; letter-spacing: 1px; }
+	#loading h1 span { color: var(--accent); }
+	#loading .sub { color: var(--muted); margin: 6px 0 22px; }
+	#progress { height: 6px; background: rgba(255,255,255,.1); border-radius: 3px; overflow: hidden; margin: 14px 0; }
+	#progress i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .3s; }
+	#status { min-height: 40px; color: var(--muted); }
+	#start { display: none; margin-top: 16px; padding: 12px 26px; font: 700 16px system-ui; color: #111; background: var(--accent); border: 0; border-radius: 8px; cursor: pointer; }
+	#credits { margin-top: 22px; font-size: 11px; color: #6f747d; }
+	#credits a { color: #8b9099; }
+	#touch { position: absolute; left: 20px; bottom: 250px; width: 120px; height: 120px; border-radius: 50%; background: rgba(255,255,255,.08); border: 1px solid var(--line); display: none; pointer-events: auto; touch-action: none; }
+	#touchE { position: absolute; right: 24px; bottom: 260px; width: 70px; height: 70px; border-radius: 50%; display: none; pointer-events: auto; font: 800 22px system-ui; background: rgba(255,216,0,.85); border: 0; }
+	@media (pointer: coarse) { #touch, #touchE { display: block; } #minimap { width: 150px; height: 150px; } }
+</style>
+</head>
+<body>
+<canvas id="view"></canvas>
+
+<div id="hud">
+	<div id="topLeft" class="panel">
+		<div id="clock">--:--<small></small></div>
+		<div id="date"></div>
+		<div id="place">VIII. kerület · <b id="street">—</b></div>
+		<div id="danger"><span>Közbiztonság:</span><b id="dangerText">—</b><div id="dangerBar"><i></i></div></div>
+	</div>
+	<div id="topRight" class="panel">
+		<div id="money">0 Ft</div>
+		<div id="healthBar"><i></i></div>
+		<div id="staminaBar"><i></i></div>
+		<div id="items"></div>
+		<div id="dataSrc"></div>
+	</div>
+	<div id="ride" class="panel"></div>
+	<div id="board" class="panel"></div>
+	<div id="prompt" class="panel"></div>
+	<div id="dialog" class="dialog panel"></div>
+	<div id="shop" class="dialog panel"></div>
+	<div id="crosshair"></div>
+	<canvas id="minimap" width="440" height="440"></canvas>
+	<div id="toasts"></div>
+	<div id="touch"></div>
+	<button id="touchE">E</button>
+</div>
+
+<div id="help">
+	<div class="panel">
+		<h2 style="margin-top:0">Irányítás</h2>
+		<table>
+			<tr><td><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></td><td>séta (egér: körülnézés)</td></tr>
+			<tr><td><kbd>Shift</kbd></td><td>futás</td></tr>
+			<tr><td><kbd>E</kbd></td><td>fel-/leszállás, metró lejárat, vásárlás</td></tr>
+			<tr><td><kbd>1</kbd>–<kbd>4</kbd></td><td>válasz, ha leszólítanak</td></tr>
+			<tr><td><kbd>M</kbd></td><td>térkép nagyítása</td></tr>
+			<tr><td><kbd>[</kbd> <kbd>]</kbd></td><td>idő lassítása / gyorsítása (alap: valós idő)</td></tr>
+			<tr><td><kbd>H</kbd></td><td>ez a súgó</td></tr>
+		</table>
+		<p style="color:var(--muted)">Reggel nyugis a környék, este és éjjel viszont figyelj: a sötét mellékutcákban könnyebben bajba kerülsz. A villamosok és buszok a valós BKK adatok alapján járnak.</p>
+	</div>
+</div>
+
+<div id="loading">
+	<div class="card">
+		<h1>Budapest <span>Online</span></h1>
+		<div class="sub">Józsefváros · VIII. kerület</div>
+		<div id="progress"><i></i></div>
+		<div id="status">Betöltés…</div>
+		<button id="start">Indulás</button>
+		<div id="credits">Térkép © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap közreműködők</a> (ODbL) · Járatadatok: BKK Zrt., CC BY 4.0 · 3D: three.js</div>
+	</div>
+</div>
+
+<script type="module" src="game/main.js"></script>
+</body>
+</html>

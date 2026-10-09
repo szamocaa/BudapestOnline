@@ -1,3 +1,70 @@
+# Budapest Online – Józsefváros (HTML játék)
+
+Böngészős 3D játék Budapest **VIII. kerületében**. Valódi térkép, valódi idő, valódi BKK-járatok.
+
+![Délelőtt a VIII. kerületben](docs/screenshots/delelott.png)
+
+**Mi van benne:**
+- **Valódi térkép:** a játék az OpenStreetMapről tölti le a kerület épületeit (magasság, udvarok), utcáit, villamossíneit, fáit, lámpáit, üzleteit és tereit. Ha a letöltés nem sikerül, egy egyszerűsített, beépített térképpel indul.
+- **Valódi 24 órás nap:** a játékidő a budapesti órához igazodik (nyári és téli időszámítással). A nap és a hold a valódi helyén áll, van szürkület és holdfázis. Este kigyulladnak az ablakok és az utcai lámpák.
+- **Működő BKK:** a **99-es busz**, a **23-as, 24-es és 28A villamos** a BKK élő járműadatai alapján mozog (a beállított BudapestGO kulccsal). Ahol nincs élő adat, ott a BKK menetrendje szerint közlekednek. Megállókban **E-vel felszállsz**, utazol, és leszállsz.
+- **M2 metró a Blahától a Keletiig:** lemész a lejárón, megvárod a szerelvényt a peronon, beszállsz, végigmész az alagúton, és a Keletinél jössz fel. A metró menetrend szerint jár.
+- **Sok járókelő:** csúcsidőben több ezer ember van az utcán, éjjel jóval kevesebb. Vegyes, valósághű lakosság, sokféle bőrtónussal.
+- **Közbiztonság napszak szerint:** reggel és napközben *nyugis*, este *feszült*, éjjel *gatya*. A sötét mellékutcák veszélyesebbek, mint a kivilágított főutak. Leszólíthatnak, kérhetnek pénzt, ki is rabolhatnak. A bajt mindig véletlenszerűen kiválasztott járókelő okozza: a kinézet semmilyen szerepet nem játszik benne (ezt teszt is ellenőrzi). Önvédelemnek van gázspray, ütés és futás.
+- **Vape árusok:** az OSM-ben szereplő valódi vape boltok előtt eladók állnak, és a forgalmas helyeken (megállók, metrólejárók) utcai standok vannak. E-vel vásárolhatsz.
+
+## Indítás
+
+A játékhoz nem kell telepíteni semmit, de **webszerverről** kell futnia, nem `file://`-ból:
+- **GitHub Pages (ajánlott):** a repó *Settings → Pages* menüjében válaszd ki forrásnak a `main` ágat és a `/ (root)` mappát. Pár perc múlva a játék elérhető a `https://szamocaa.github.io/BudapestOnline/` címen.
+- **Saját gépen:** a repó mappájában futtasd a `python3 -m http.server 8000` parancsot, majd nyisd meg a `http://localhost:8000` címet.
+
+Az első indításkor a térkép letöltése az OpenStreetMapről 20–90 másodperc, utána a böngésző eltárolja. Ha azonnali betöltést szeretnél, egyszer futtasd le ezt, és töltsd fel a létrejött `data/district8.json` fájlt:
+```
+node tools/bake_snapshot.mjs
+```
+
+### Irányítás
+| Gomb | Mit csinál |
+|---|---|
+| W A S D + egér | séta, körülnézés (kattints a képre az egérhez) |
+| Shift | futás |
+| E | fel- és leszállás, metrólejáró, vásárlás |
+| 1–4 | válasz, ha leszólítanak |
+| M | térkép nagyítása |
+| [ ] | idő lassítása és gyorsítása (alapból valós idő) |
+| H | súgó |
+
+Mobilon bal oldalt egy virtuális joystick van, jobb oldalt húzással nézel körbe, a sárga gomb pedig az E.
+
+### Beállítások a címsorban
+`index.html?time=2026-10-09T22:30` (adott időpont), `&speed=60` (gyorsított idő), `&people=1500` (kevesebb ember gyengébb gépen), `&quality=low`, `&fallback=1` (beépített térkép), `&nolive=1` (élő BKK adat nélkül).
+
+## BKK API kulcs
+A kulcs a `game/config.js` fájlban van (`bkkKey`). Mivel böngészős játék, a kulcsot bárki látja, aki megnyitja az oldalt, ahogy minden webes BKK-alkalmazásnál. Ha gond van vele, az opendata.bkk.hu oldalon újat kérhetsz, és kicserélheted. A játék a `futar.bkk.hu` FUTÁR API-t hívja (`vehicles-for-route`, `route-details`). Más GitHub Pages oldalak is így használják. Ha a böngésző mégis letiltaná, a játék menetrend szerint működik tovább, és a jobb felső sarokban kiírja az okát.
+
+## Mi pontos és mi nem
+| Rész | Állapot |
+|---|---|
+| Nap- és holdállás, budapesti idő | ellenőrizve (PyEphem és tz-adatbázis, a nap 0,01°-on belül) |
+| BKK válaszok feldolgozása, kódolt vonalak | tesztelve a valódi API-válaszok formájával |
+| Járatok útvonala és megállói (99, 23, 24, 28A, M2) | a BKK GTFS adataiból (2026. június); élő módban a BKK `route-details` adja |
+| Menetrend (követési idők, első és utolsó járat) | a BKK GTFS alapján, kerekítve; az őszi menetrend kicsit eltérhet |
+| Élő BKK kapcsolat és OpenStreetMap letöltés | itt nem tudtam kipróbálni (hálózati korlát), de más oldalakon ugyanígy működik |
+| Beépített (offline) térkép | közelítés: a fő utcák és megállók jók, a házak kitaláltak |
+| Az M2 élő pozíciói | a BKK valószínűleg nem ad metró-GPS-t, ezért menetrend szerint jár |
+
+Tesztek: `tests/web/run.sh` (Node 18+), böngészős próba: `npm i playwright && node tests/web/play.mjs`.
+
+## Adatok és licencek
+- Térkép: © OpenStreetMap közreműködők, ODbL.
+- Járatadatok: BKK Zrt., CC BY 4.0.
+- 3D motor: three.js (MIT), a `game/vendor` mappában.
+
+---
+
+# Unreal Engine verzió (korábbi)
+
 # Budapest Sim
 
 A real-time Budapest simulator for Unreal Engine 5, starting with **VIII. district (Józsefváros)**:

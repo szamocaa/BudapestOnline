@@ -24,3 +24,7 @@ Tools/Districts/raw/
 # Python
 __pycache__/
 *.pyc
+
+# Browser test screenshots
+tests/web/out/
+node_modules/
