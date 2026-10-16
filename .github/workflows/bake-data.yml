@@ -13,6 +13,7 @@ on:
       - game/transit/bkk.js
       - tools/bake_snapshot.mjs
       - tools/bake_bkk.mjs
+      - tools/osm_xml_to_overpass.mjs
       - .github/workflows/bake-data.yml
 
 permissions:
@@ -31,10 +32,26 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: OpenStreetMap snapshot (data/district8.json)
+      - name: OpenStreetMap snapshot from Overpass (data/district8.json)
+        id: overpass
+        continue-on-error: true
         run: |
-          for i in 1 2 3; do node tools/bake_snapshot.mjs && break; echo "retry in 60 s"; sleep 60; done
-          test -s data/district8.json
+          for i in 1 2; do node tools/bake_snapshot.mjs && exit 0; echo "retry in 45 s"; sleep 45; done
+          exit 1
+      - name: OpenStreetMap snapshot from the Geofabrik extract (if Overpass failed)
+        if: steps.overpass.outcome != 'success'
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq osmium-tool
+          mkdir -p /tmp/osm && cd /tmp/osm
+          curl -sSfL -o hungary.osm.pbf https://download.geofabrik.de/europe/hungary-latest.osm.pbf
+          # The game's bounding box (geo.js DISTRICT_BBOX); multipolygons and routes kept complete.
+          osmium extract --strategy=smart -S types=multipolygon,route,boundary -b 19.0560,47.4730,19.1130,47.5045 hungary.osm.pbf -o d8.osm.pbf --overwrite
+          osmium cat d8.osm.pbf -f osm,add_metadata=false -o d8.osm --overwrite
+          cd "$GITHUB_WORKSPACE"
+          node tools/osm_xml_to_overpass.mjs /tmp/osm/d8.osm /tmp/osm/raw.json
+          node tools/bake_snapshot.mjs --raw /tmp/osm/raw.json
+      - name: Check the snapshot
+        run: test -s data/district8.json && node -e "const d=require('./data/district8.json'); console.log(d.buildings.length+' buildings, '+d.buildings.filter(b=>b.part).length+' parts, '+d.roads.length+' roads, '+d.routes.length+' routes, '+(d.props||[]).length+' props'); if(d.buildings.length<1000||!d.boundary) process.exit(1)"
       - name: BKK line shapes (data/bkk-lines.json)
         run: node tools/bake_bkk.mjs || echo "::warning::BKK API unavailable, keeping the previous data/bkk-lines.json"
       - name: Commit

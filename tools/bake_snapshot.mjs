@@ -24,7 +24,7 @@ if (rawArg > 0) {
 		try {
 			console.log(`Downloading from ${endpoint} (can take a minute)...`);
 			const res = await fetch(endpoint, { method: 'POST', body: 'data=' + encodeURIComponent(buildQuery()), headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': 'budapest-online-snapshot/1.0' } });
-			if (!res.ok) throw new Error(`HTTP ${res.status}`);
+			if (!res.ok) throw new Error(`HTTP ${res.status}: ${(await res.text()).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').slice(0, 400)}`);
 			raw = await res.json();
 			break;
 		} catch (err) {
