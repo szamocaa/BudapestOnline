@@ -23,7 +23,7 @@ export function buildQuery() {
 	const bb = `(${s},${w},${n},${e})`;
 	const refs = LINE_REFS.join('|');
 	return `[out:json][timeout:180];
-(rel(1606100);rel["boundary"="administrative"]["admin_level"="9"]["name"~"VIII\\. kerület"](47.40,18.90,47.60,19.30);)->.b;
+(rel(1606100);rel["boundary"="administrative"]["admin_level"="9"]["name"~"(^|[^IVX])VIII\\. kerület"](47.40,18.90,47.60,19.30);)->.b;
 .b out geom;
 (way["building"]${bb};relation["building"]["type"="multipolygon"]${bb};way["building:part"]${bb};relation["building:part"]["type"="multipolygon"]${bb};)->.bld;
 .bld out geom;
@@ -225,12 +225,20 @@ export function normalise(raw) {
 		props: [],
 	};
 
-	// District boundary (outer ring of the admin relation).
-	const boundaryRel = els.find((e) => e.type === 'relation' && e.tags && e.tags.boundary === 'administrative' && e.tags.admin_level === '9');
-	if (boundaryRel) {
-		const rings = assembleRings((boundaryRel.members || []).filter((m) => m.type === 'way' && m.role !== 'inner').map((m) => ptsOf(m.geometry)));
-		if (rings.length) data.boundary = roundPts(rings.sort((a, b) => Math.abs(polygonArea(b)) - Math.abs(polygonArea(a)))[0]);
+	// District boundary (outer ring of the admin relation). Several districts may come back (a name
+	// search for "VIII. kerület" also finds "XVIII. kerület"): use the one around the map origin,
+	// which lies in Józsefváros.
+	const outerRing = (rel) => {
+		const rings = assembleRings((rel.members || []).filter((m) => m.type === 'way' && m.role !== 'inner' && m.geometry).map((m) => ptsOf(m.geometry)));
+		return rings.length ? rings.sort((a, b) => Math.abs(polygonArea(b)) - Math.abs(polygonArea(a)))[0] : null;
+	};
+	const admins = els.filter((e) => e.type === 'relation' && e.tags && e.tags.boundary === 'administrative' && e.tags.admin_level === '9');
+	let boundary = null;
+	for (const rel of admins) {
+		const ring = outerRing(rel);
+		if (ring && ring.length > 2 && pointInPolygon(0, 0, ring)) { boundary = ring; break; }
 	}
+	if (boundary) data.boundary = roundPts(boundary);
 
 	const seenWays = new Set();
 	for (const el of els) {

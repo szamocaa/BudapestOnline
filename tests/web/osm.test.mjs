@@ -9,6 +9,10 @@ const geom = (pts) => pts.map(([x, z]) => ll(x, z));
 const closed = (pts) => [...pts, pts[0]];
 
 const elements = [
+	// Another district that a loose name search also returns ("XVIII. kerület"), far away: must be ignored.
+	{ type: 'relation', id: 2, tags: { boundary: 'administrative', admin_level: '9', name: 'XVIII. kerület' }, members: [
+		{ type: 'way', ref: 13, role: 'outer', geometry: geom(closed([[9000, 9000], [9500, 9000], [9500, 9500], [9000, 9500]])) },
+	] },
 	{ type: 'relation', id: 1, tags: { boundary: 'administrative', admin_level: '9', name: 'VIII. kerület' }, members: [
 		{ type: 'way', ref: 11, role: 'outer', geometry: geom([[-500, -500], [500, -500], [500, 500]]) },
 		{ type: 'way', ref: 12, role: 'outer', geometry: geom([[-500, -500], [-500, 500], [500, 500]]) }, // second half reversed
