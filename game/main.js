@@ -366,6 +366,7 @@ async function main() {
 			frame.camera = metro.camera;
 			audio.update(frame);
 			pipeline.render(metro.scene, metro.camera, frame);
+			stats.render = pipeline.info();
 			setPrompt(metro.prompt);
 			hud.ride({ ref: 'M2', mode: 'metro', text: metro.message });
 		} else {
@@ -545,6 +546,27 @@ async function main() {
 		teleport: (lat, lon, yaw) => { const [x, z] = toXZ(lat, lon); player.teleport(x, z, yaw); },
 		state: () => ({ mode, ride, dialog: dialog && dialog.type, money: player.money, health: player.health, danger: danger.level, hours: budapestHours(unix) }),
 		press: (code) => pressed.add(code),
+		/**
+		 * Puts the camera at a viewpoint (for screenshots): { at: [lat, lon], lookAt: [lat, lon, height?],
+		 * yaw, pitch, height (eye height in metres) }.
+		 */
+		view: (v) => {
+			ride = null;
+			mode = 'street';
+			const [x, z] = v.at ? toXZ(v.at[0], v.at[1]) : [player.x, player.z];
+			let yaw = v.yaw != null ? v.yaw : player.yaw;
+			const eye = v.height || 1.68;
+			let pitch = v.pitch || 0;
+			if (v.lookAt) {
+				const [tx, tz] = toXZ(v.lookAt[0], v.lookAt[1]);
+				yaw = Math.atan2(-(tx - x), -(tz - z));
+				if (v.pitch == null) pitch = Math.atan2((v.lookAt[2] || eye) - eye, Math.hypot(tx - x, tz - z));
+			}
+			player.teleport(x, z, yaw);
+			player.pitch = pitch;
+			player.eye = eye;
+		},
+		leaveMetro: () => { mode = 'street'; },
 		enterMetro: (i) => { mode = 'metro'; metro.enter(i, { transit, hours: budapestHours(unix), dayIndex: budapestClock(unix).dayIndex, seconds: serviceClock(budapestHours(unix), budapestClock(unix).dayIndex).seconds, headway: 4 }); },
 		metro,
 	};
