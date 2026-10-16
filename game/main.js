@@ -114,6 +114,19 @@ async function loadLines(city, client) {
 		}
 		if (lines.length) source = 'BKK';
 	}
+	// Exact BKK shapes saved with the game (tools/bake_bkk.mjs), for when the API is out of reach.
+	if (!lines.length && !CONFIG.forceFallback) {
+		try {
+			const res = await fetch('data/bkk-lines.json', { cache: 'no-cache' });
+			if (res.ok) {
+				const saved = await res.json();
+				if (saved.version === 1 && saved.lines && saved.lines.length) {
+					lines = saved.lines;
+					source = 'BKK (mentett)';
+				}
+			}
+		} catch { /* no saved lines */ }
+	}
 	// Fill in any line BKK did not give us from OpenStreetMap, then from the built-in fallback.
 	for (const extra of [linesFromOsm(city.routes), city.fallbackLines || []]) {
 		for (const l of extra) if (!lines.some((x) => x.ref === l.ref) && l.directions.length) lines.push(l);

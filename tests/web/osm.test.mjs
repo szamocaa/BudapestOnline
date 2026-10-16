@@ -19,6 +19,13 @@ const elements = [
 		{ type: 'way', ref: 202, role: 'outer', geometry: geom([[100, 0], [100, 40], [160, 40]]) },
 		{ type: 'way', ref: 203, role: 'inner', geometry: geom(closed([[115, 10], [145, 10], [145, 30], [115, 30]])) },
 	] },
+	// Simple 3D Buildings: an outline with a domed part inside it.
+	{ type: 'way', id: 110, tags: { building: 'church', name: 'Szent József templom', wikidata: 'Q1' }, geometry: geom(closed([[300, 0], [340, 0], [340, 60], [300, 60]])) },
+	{ type: 'way', id: 111, tags: { 'building:part': 'yes', height: '42', min_height: '20', 'roof:shape': 'dome', 'roof:height': '8', 'building:material': 'stone', 'roof:colour': 'green' }, geometry: geom(closed([[310, 10], [330, 10], [330, 30], [310, 30]])) },
+	{ type: 'way', id: 120, tags: { barrier: 'wall', height: '3' }, geometry: geom([[-200, 0], [-100, 0]]) },
+	{ type: 'way', id: 403, tags: { highway: 'residential', name: 'Mátyás tér', 'parking:both': 'parallel', surface: 'sett', lanes: '2' }, geometry: geom([[50, 50], [50, 150]]) },
+	{ type: 'node', id: 705, lat: ll(20, 10).lat, lon: ll(20, 10).lon, tags: { amenity: 'bench' } },
+	{ type: 'node', id: 706, lat: ll(22, 10).lat, lon: ll(22, 10).lon, tags: { highway: 'crossing', crossing: 'zebra' } },
 	{ type: 'way', id: 300, tags: { building: 'yes' }, geometry: geom(closed([[2000, 2000], [2010, 2000], [2010, 2010], [2000, 2010]])) }, // far outside the district
 	{ type: 'way', id: 400, tags: { highway: 'primary', name: 'József körút' }, geometry: geom([[0, -100], [0, 300]]) },
 	{ type: 'way', id: 401, tags: { highway: 'footway' }, geometry: geom([[0, 0], [50, 0]]) },
@@ -51,7 +58,18 @@ const elements = [
 const d = normalise({ elements });
 
 assert.ok(d.boundary && Math.abs(Math.abs(polygonArea(d.boundary)) - 1e6) < 50, 'boundary ring joined');
-assert.deepEqual(d.buildings.map((b) => b.id).sort(), [100, 200], 'far building filtered by boundary');
+assert.deepEqual(d.buildings.map((b) => b.id).sort((x, y) => x - y), [100, 110, 111, 200], 'far building filtered by boundary');
+const church = d.buildings.find((b) => b.id === 110), dome = d.buildings.find((b) => b.id === 111);
+assert.ok(church.hasParts && !church.part, 'outline knows it has parts');
+assert.ok(dome.part && dome.roofShape === 'dome' && dome.roofH === 8 && dome.minH === 20 && dome.h === 42 && dome.material === 'stone');
+assert.equal(church.tags.wikidata, 'Q1');
+assert.ok(!('roofShape' in d.buildings.find((b) => b.id === 100)), 'absent tags are not stored');
+assert.deepEqual(d.barriers.map((w) => [w.kind, w.h]), [['wall', 3]]);
+const matyas = d.roads.find((r) => r.id === 403);
+assert.deepEqual(matyas.parking, { left: 'parallel', right: 'parallel' });
+assert.equal(matyas.surface, 'sett');
+assert.deepEqual(d.props.map((q) => q.kind).sort(), ['bench', 'crossing']);
+assert.equal(d.props.find((q) => q.kind === 'crossing').crossing, 'zebra');
 const b100 = d.buildings.find((b) => b.id === 100);
 assert.equal(b100.colour, '#e2c56c');
 assert.ok(Math.abs(b100.h - (5 * 3.4 + 0.8)) < 1e-9);
@@ -59,7 +77,7 @@ const b200 = d.buildings.find((b) => b.id === 200);
 assert.equal(b200.h, 19);
 assert.equal(b200.holes.length, 1, 'courtyard kept');
 assert.ok(Math.abs(Math.abs(polygonArea(b200.outer)) - 2400) < 2);
-assert.equal(d.roads.length, 2, 'tunnel skipped');
+assert.equal(d.roads.length, 3, 'tunnel skipped');
 assert.equal(d.roads.find((r) => r.id === 400).name, 'József körút');
 assert.equal(d.roads.find((r) => r.id === 400).width, 17);
 assert.equal(d.rails.length, 1);

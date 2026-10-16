@@ -6,7 +6,7 @@
 
 import { toXZ, DISTRICT_BBOX, polygonArea, pointInPolygon, closestOnSegment, hashString } from './geo.js';
 
-export const DATA_VERSION = 3;
+export const DATA_VERSION = 4;
 export const LINE_REFS = ['99', '23', '24', '28A', 'M2'];
 /** The OSM route type each of our lines must have (a Volán bus numbered 24 is not tram 24). */
 export const LINE_ROUTE = { '99': 'bus', '23': 'tram', '24': 'tram', '28A': 'tram', M2: 'subway' };
@@ -24,15 +24,17 @@ export function buildQuery() {
 	return `[out:json][timeout:180];
 (rel(1606100);rel["boundary"="administrative"]["admin_level"="9"]["name"~"VIII\\. kerület"](47.40,18.90,47.60,19.30);)->.b;
 .b out geom;
-(way["building"]${bb};relation["building"]["type"="multipolygon"]${bb};)->.bld;
+(way["building"]${bb};relation["building"]["type"="multipolygon"]${bb};way["building:part"]${bb};relation["building:part"]["type"="multipolygon"]${bb};)->.bld;
 .bld out geom;
 way["highway"]${bb}->.hw;
 .hw out geom;
 way["railway"~"^(tram|subway|rail)$"]${bb}->.rw;
 .rw out geom;
+way["barrier"~"^(wall|fence|retaining_wall|hedge|guard_rail)$"]${bb}->.bar;
+.bar out geom;
 (way["leisure"~"^(park|garden|playground|pitch)$"]${bb};way["landuse"~"^(grass|cemetery|recreation_ground|village_green|religious)$"]${bb};relation["leisure"="park"]${bb};relation["landuse"="cemetery"]${bb};way["amenity"="parking"]${bb};way["place"="square"]${bb};way["highway"="pedestrian"]["area"="yes"]${bb};way["natural"="water"]${bb};)->.ar;
 .ar out geom;
-(node["natural"="tree"]${bb};node["highway"="street_lamp"]${bb};node["shop"]${bb};node["amenity"]${bb};node["railway"="subway_entrance"]${bb};node["highway"="bus_stop"]${bb};node["railway"="tram_stop"]${bb};)->.pt;
+(node["natural"="tree"]${bb};node["highway"="street_lamp"]${bb};node["shop"]${bb};node["amenity"]${bb};node["railway"="subway_entrance"]${bb};node["highway"="bus_stop"]${bb};node["railway"="tram_stop"]${bb};node["highway"~"^(crossing|traffic_signals)$"]${bb};node["barrier"="bollard"]${bb};node["historic"]${bb};node["tourism"~"^(artwork|attraction|hotel|museum)$"]${bb};node["man_made"~"^(advertising|street_cabinet|flagpole)$"]${bb};node["advertising"]${bb};node["leisure"~"^(playground|fitness_station)$"]${bb};)->.pt;
 .pt out body;
 rel["type"="route"]["route"~"^(bus|tram|subway)$"]["ref"~"^(${refs})$"](47.35,18.90,47.65,19.35)->.routes;
 .routes out geom;
@@ -218,6 +220,8 @@ export function normalise(raw) {
 		stops: [],
 		entrances: [],
 		routes: [],
+		barriers: [],
+		props: [],
 	};
 
 	// District boundary (outer ring of the admin relation).
@@ -237,13 +241,15 @@ export function normalise(raw) {
 			if (pts.length < 2) continue;
 			const closed = el.geometry.length > 3 && el.geometry[0].lat === el.geometry[el.geometry.length - 1].lat && el.geometry[0].lon === el.geometry[el.geometry.length - 1].lon;
 
-			if (t.building && t.building !== 'no' && closed) {
+			if (isBuilding(t) && closed) {
 				addBuilding(data, el.id, t, [closeRing(pts)]);
+			} else if (t.barrier && /^(wall|fence|retaining_wall|hedge|guard_rail)$/.test(t.barrier)) {
+				data.barriers.push({ id: el.id, kind: t.barrier, pts: roundPts(pts), h: round(parseLength(t.height) || BARRIER_HEIGHT[t.barrier]), material: t.material || t.fence_type || t.wall || '' });
 			} else if (t.highway && !(t.area === 'yes' && t.highway === 'pedestrian')) {
 				if (t.tunnel === 'yes' || t.indoor === 'yes' || t.highway === 'construction' || t.highway === 'proposed' || t.highway === 'platform') continue;
 				const cls = t.highway;
 				const width = parseLength(t.width) || ROAD_WIDTH[cls] || 4;
-				data.roads.push({ id: el.id, cls, name: t.name || '', pts: roundPts(pts), width: round(width), oneway: t.oneway === 'yes', foot: t.foot !== 'no' && t.access !== 'private' });
+				data.roads.push({ id: el.id, cls, name: t.name || '', pts: roundPts(pts), width: round(width), oneway: t.oneway === 'yes', foot: t.foot !== 'no' && t.access !== 'private', ...roadExtras(t) });
 			} else if (t.railway === 'tram' || t.railway === 'subway' || t.railway === 'rail') {
 				if (t.railway === 'subway' || t.tunnel === 'yes') continue; // underground: drawn separately
 				data.rails.push({ id: el.id, kind: t.railway, pts: roundPts(pts) });
@@ -256,7 +262,7 @@ export function normalise(raw) {
 			if (t.boundary) continue;
 			const outer = assembleRings((el.members || []).filter((m) => m.type === 'way' && m.role !== 'inner').map((m) => ptsOf(m.geometry)));
 			const inner = assembleRings((el.members || []).filter((m) => m.type === 'way' && m.role === 'inner').map((m) => ptsOf(m.geometry)));
-			if (t.building && t.building !== 'no') {
+			if (isBuilding(t)) {
 				for (const o of outer) addBuilding(data, el.id, t, [o, ...inner.filter((h) => pointInPolygon(h[0][0], h[0][1], o))]);
 			} else {
 				const kind = areaKind(t);
@@ -265,6 +271,8 @@ export function normalise(raw) {
 		} else if (el.type === 'node' && el.tags) {
 			const [x, z] = toXZ(el.lat, el.lon);
 			const p = [round(x), round(z)];
+			const prop = propKind(t);
+			if (prop) data.props.push({ x: p[0], z: p[1], kind: prop, ...(t.name ? { name: t.name } : {}), ...(t.crossing ? { crossing: t.crossing } : {}) });
 			if (t.natural === 'tree') data.trees.push(p);
 			else if (t.highway === 'street_lamp') data.lamps.push(p);
 			else if (t.railway === 'subway_entrance') data.entrances.push({ x: p[0], z: p[1], name: t.name || '', ref: t.ref || '' });
@@ -322,7 +330,82 @@ export function normalise(raw) {
 		data.buildings = data.buildings.filter((b) => near(b.cx, b.cz));
 	}
 	data.buildings.sort((a, b) => a.id - b.id);
+	markOutlinesWithParts(data.buildings);
 	return data;
+}
+
+const isBuilding = (t) => (t.building && t.building !== 'no') || (t['building:part'] && t['building:part'] !== 'no');
+
+const BARRIER_HEIGHT = { wall: 2.2, fence: 1.6, retaining_wall: 1, hedge: 1.3, guard_rail: 0.9 };
+
+/** Street furniture and other point features drawn as props (benches, bollards, crossings...). */
+function propKind(t) {
+	if (t.highway === 'crossing') return 'crossing';
+	if (t.highway === 'traffic_signals') return 'signals';
+	if (t.barrier === 'bollard') return 'bollard';
+	if (t.amenity === 'bench') return 'bench';
+	if (t.amenity === 'waste_basket') return 'bin';
+	if (t.amenity === 'recycling') return 'recycling';
+	if (t.amenity === 'post_box') return 'postbox';
+	if (t.amenity === 'telephone') return 'phone';
+	if (t.amenity === 'vending_machine') return 'vending';
+	if (t.amenity === 'bicycle_parking') return 'bikerack';
+	if (t.amenity === 'bicycle_rental') return 'bikeshare';
+	if (t.amenity === 'drinking_water') return 'drinking';
+	if (t.amenity === 'fountain') return 'fountain';
+	if (t.amenity === 'parcel_locker') return 'locker';
+	if (t.amenity === 'toilets') return 'toilets';
+	if (t.amenity === 'clock') return 'clock';
+	if (t.advertising === 'column' || t.man_made === 'advertising') return 'adcolumn';
+	if (t.advertising) return 'billboard';
+	if (t.man_made === 'street_cabinet') return 'cabinet';
+	if (t.historic === 'memorial' || t.historic === 'monument' || t.historic === 'statue' || t.tourism === 'artwork') return t.memorial === 'plaque' ? null : 'statue';
+	if (t.leisure === 'playground' || t.leisure === 'fitness_station') return 'playground';
+	return null;
+}
+
+const PARKING_SIDE = ['both', 'left', 'right'];
+/** Road attributes the city builder uses for kerbs, parked cars and surfaces. */
+function roadExtras(t) {
+	const e = {};
+	if (t.lanes) e.lanes = parseInt(t.lanes, 10) || undefined;
+	if (t.surface) e.surface = t.surface;
+	if (t.sidewalk) e.sidewalk = t.sidewalk;
+	if (t.footway) e.footway = t.footway;
+	if (t.bridge && t.bridge !== 'no') e.bridge = true;
+	if (t.layer) e.layer = parseInt(t.layer, 10) || 0;
+	if (t.service) e.service = t.service;
+	if (t.maxspeed) e.maxspeed = parseInt(t.maxspeed, 10) || undefined;
+	// Street parking (both tagging schemes): {left, right} = 'parallel' | 'diagonal' | 'perpendicular'.
+	const park = {};
+	for (const side of PARKING_SIDE) {
+		const v = t[`parking:${side}`] || t[`parking:lane:${side}`];
+		if (!v || /^(no|none|separate|marked|no_parking|no_stopping|fire_lane)$/.test(v)) continue;
+		const kind = /diagonal/.test(v) ? 'diagonal' : /perpendicular/.test(v) ? 'perpendicular' : 'parallel';
+		if (side !== 'right') park.left = kind;
+		if (side !== 'left') park.right = kind;
+	}
+	if (park.left || park.right) e.parking = park;
+	for (const k of Object.keys(e)) if (e[k] === undefined) delete e[k];
+	return e;
+}
+
+/**
+ * OSM's Simple 3D Buildings: when a building outline has building:part pieces inside it, the parts
+ * describe the shape and the outline itself must not be drawn on top of them.
+ */
+function markOutlinesWithParts(buildings) {
+	const parts = buildings.filter((b) => b.part);
+	if (!parts.length) return;
+	for (const b of buildings) {
+		if (b.part) continue;
+		let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity;
+		for (const [x, z] of b.outer) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); z0 = Math.min(z0, z); z1 = Math.max(z1, z); }
+		for (const p of parts) {
+			if (p.cx < x0 || p.cx > x1 || p.cz < z0 || p.cz > z1) continue;
+			if (pointInPolygon(p.cx, p.cz, b.outer)) { b.hasParts = true; break; }
+		}
+	}
 }
 
 function addBuilding(data, id, t, rings) {
@@ -332,19 +415,35 @@ function addBuilding(data, id, t, rings) {
 	let cx = 0, cz = 0;
 	for (const [x, z] of outer) { cx += x; cz += z; }
 	cx /= outer.length; cz /= outer.length;
-	data.buildings.push({
+	const isPart = !(t.building && t.building !== 'no');
+	const b = {
 		id,
 		outer: roundPts(outer),
 		holes: rings.slice(1).filter((r) => r.length >= 3).map(roundPts),
 		h: round(h),
 		minH: round(minH),
-		kind: t.building,
+		kind: isPart ? t['building:part'] : t.building,
 		name: t.name || '',
 		colour: parseColour(t['building:colour']),
 		roof: parseColour(t['roof:colour']),
 		cx: round(cx),
 		cz: round(cz),
-	});
+	};
+	// Simple 3D Buildings tags: only stored when present, to keep the snapshot small.
+	if (isPart) b.part = true;
+	if (t['roof:shape'] && t['roof:shape'] !== 'flat') b.roofShape = t['roof:shape'];
+	const rh = parseLength(t['roof:height']);
+	if (rh != null) b.roofH = round(rh);
+	else if (t['roof:levels'] && parseFloat(t['roof:levels']) > 0) b.roofH = round(parseFloat(t['roof:levels']) * 3);
+	if (t['roof:direction']) b.roofDir = parseFloat(t['roof:direction']) || t['roof:direction'];
+	if (t['roof:orientation']) b.roofOrient = t['roof:orientation'];
+	if (t['roof:material']) b.roofMat = t['roof:material'];
+	if (t['building:material']) b.material = t['building:material'];
+	if (t['building:levels']) b.levels = parseFloat(String(t['building:levels']).replace(',', '.')) || undefined;
+	if (t['building:min_level']) b.minLevel = parseFloat(t['building:min_level']) || 0;
+	for (const k of ['wikidata', 'historic', 'amenity', 'tourism', 'heritage', 'start_date', 'architect', 'building:architecture', 'addr:street', 'addr:housenumber']) if (t[k]) (b.tags ||= {})[k] = t[k];
+	for (const k of Object.keys(b)) if (b[k] === undefined) delete b[k];
+	data.buildings.push(b);
 }
 
 function areaKind(t) {
@@ -372,8 +471,6 @@ function poiKind(t) {
 	if (a === 'bar' || a === 'pub' || a === 'nightclub') return 'bar';
 	if (a === 'restaurant' || a === 'fast_food') return 'food';
 	if (a === 'police') return 'police';
-	if (a === 'bench') return 'bench';
-	if (a === 'waste_basket') return 'bin';
 	if (a === 'place_of_worship') return 'church';
 	if (a === 'school' || a === 'kindergarten' || a === 'university' || a === 'college') return 'school';
 	if (a === 'bicycle_rental' || a === 'atm' || a === 'bank') return a === 'atm' || a === 'bank' ? 'atm' : 'bikes';

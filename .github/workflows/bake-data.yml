@@ -1,0 +1,48 @@
+# Downloads the real map (OpenStreetMap) and the BKK line shapes and commits them to data/, so the
+# game starts instantly with the real VIII. district. Runs when the loaders change, monthly, or by hand.
+name: Bake map and line data
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 3 1 * *'
+  push:
+    branches: [main]
+    paths:
+      - game/osm.js
+      - game/transit/bkk.js
+      - tools/bake_snapshot.mjs
+      - tools/bake_bkk.mjs
+      - .github/workflows/bake-data.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: bake-data
+  cancel-in-progress: true
+
+jobs:
+  bake:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: OpenStreetMap snapshot (data/district8.json)
+        run: |
+          for i in 1 2 3; do node tools/bake_snapshot.mjs && break; echo "retry in 60 s"; sleep 60; done
+          test -s data/district8.json
+      - name: BKK line shapes (data/bkk-lines.json)
+        run: node tools/bake_bkk.mjs || echo "::warning::BKK API unavailable, keeping the previous data/bkk-lines.json"
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898299+github-actions[bot]@users.noreply.github.com"
+          git add data/
+          if git diff --cached --quiet; then echo "No changes."; exit 0; fi
+          git commit -m "Update map and line data (OpenStreetMap, BKK)"
+          git pull --rebase origin main
+          git push origin HEAD:main
