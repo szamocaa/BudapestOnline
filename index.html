@@ -65,7 +65,8 @@
 	#credits a { color: #8b9099; }
 	#touch { position: absolute; left: 20px; bottom: 250px; width: 120px; height: 120px; border-radius: 50%; background: rgba(255,255,255,.08); border: 1px solid var(--line); display: none; pointer-events: auto; touch-action: none; }
 	#touchE { position: absolute; right: 24px; bottom: 260px; width: 70px; height: 70px; border-radius: 50%; display: none; pointer-events: auto; font: 800 22px system-ui; background: rgba(255,216,0,.85); border: 0; }
-	@media (pointer: coarse) { #touch, #touchE { display: block; } #minimap { width: 150px; height: 150px; } }
+	#touchJump { position: absolute; right: 24px; bottom: 350px; width: 60px; height: 60px; border-radius: 50%; display: none; pointer-events: auto; font: 800 26px system-ui; background: rgba(255,255,255,.75); border: 0; }
+	@media (pointer: coarse) { #touch, #touchE, #touchJump { display: block; } #minimap { width: 150px; height: 150px; } }
 </style>
 </head>
 <body>
@@ -94,6 +95,7 @@
 	<div id="toasts"></div>
 	<div id="touch"></div>
 	<button id="touchE">E</button>
+	<button id="touchJump">⤒</button>
 </div>
 
 <div id="help">
@@ -102,6 +104,7 @@
 		<table>
 			<tr><td><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></td><td>séta (egér: körülnézés)</td></tr>
 			<tr><td><kbd>Shift</kbd></td><td>sprint (korlátlan, nagyon gyors)</td></tr>
+			<tr><td><kbd>Space</kbd></td><td>ugrás</td></tr>
 			<tr><td><kbd>E</kbd></td><td>fel-/leszállás, metró lejárat, vásárlás</td></tr>
 			<tr><td><kbd>1</kbd>–<kbd>4</kbd></td><td>válasz, ha leszólítanak</td></tr>
 			<tr><td><kbd>M</kbd></td><td>térkép nagyítása</td></tr>

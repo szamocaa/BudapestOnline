@@ -304,6 +304,8 @@ async function main() {
 	}, { passive: false });
 	stick.addEventListener('touchend', () => (player.touchMove.x = player.touchMove.y = 0));
 	$('touchE').addEventListener('touchstart', (e) => { pressed.add('KeyE'); e.preventDefault(); }, { passive: false });
+	$('touchJump').addEventListener('touchstart', (e) => { player.touchJump = true; e.preventDefault(); }, { passive: false });
+	$('touchJump').addEventListener('touchend', () => (player.touchJump = false));
 
 	// ---------------------------------------------------------------- start screen
 	setStatus(`Kész. Térkép: ${city.source === 'fallback' ? 'egyszerűsített (offline)' : 'OpenStreetMap'} · Vonalak: ${lineSource}`, 1);

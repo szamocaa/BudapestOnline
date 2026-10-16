@@ -29,13 +29,14 @@ node tools/bake_snapshot.mjs
 |---|---|
 | W A S D + egér | séta, körülnézés (kattints a képre az egérhez) |
 | Shift | sprint – korlátlan ideig, 15 m/s (kb. 54 km/h) |
+| Space | ugrás |
 | E | fel- és leszállás, metrólejáró, vásárlás |
 | 1–4 | válasz, ha leszólítanak |
 | M | térkép nagyítása |
 | [ ] | idő lassítása és gyorsítása (alapból valós idő) |
 | H | súgó |
 
-Mobilon bal oldalt egy virtuális joystick van, jobb oldalt húzással nézel körbe, a sárga gomb pedig az E.
+Mobilon bal oldalt egy virtuális joystick van, jobb oldalt húzással nézel körbe, a sárga gomb az E, a fehér ⤒ gomb az ugrás.
 
 ### Beállítások a címsorban
 `index.html?time=2026-10-09T22:30` (adott időpont), `&speed=60` (gyorsított idő), `&people=1500` (kevesebb ember gyengébb gépen), `&quality=low`, `&fallback=1` (beépített térkép), `&nolive=1` (élő BKK adat nélkül).

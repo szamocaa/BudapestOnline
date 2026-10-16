@@ -3,6 +3,9 @@ import * as THREE from './vendor/three.module.min.js';
 
 export const WALK_SPEED = 1.55; // m/s, a relaxed city walk
 export const SPRINT_SPEED = 15; // m/s while holding Shift - unlimited, no stamina
+export const GRAVITY = 22; // m/s^2: a bit stronger than real so jumps feel snappy
+export const JUMP_HEIGHT = 1.1; // metres
+const JUMP_SPEED = Math.sqrt(2 * GRAVITY * JUMP_HEIGHT);
 
 export class Player {
 	constructor(camera, dom, world) {
@@ -12,6 +15,9 @@ export class Player {
 		this.x = 0;
 		this.z = 0;
 		this.eye = 1.68;
+		this.y = 0; // feet height above the street (jumping)
+		this.vy = 0;
+		this.onGround = true;
 		this.yaw = 0;
 		this.pitch = 0;
 		this.vx = 0;
@@ -28,6 +34,8 @@ export class Player {
 
 		window.addEventListener('keydown', (e) => {
 			this.keys.add(e.code);
+			// Remember the press itself, so a quick tap between two frames still jumps.
+			if (e.code === 'Space' && !e.repeat) this.jumpQueued = true;
 			if (['Space', 'ArrowUp', 'ArrowDown'].includes(e.code)) e.preventDefault();
 		});
 		window.addEventListener('keyup', (e) => this.keys.delete(e.code));
@@ -40,6 +48,8 @@ export class Player {
 		});
 		// Touch: drag to look (right half), on-screen stick handled by the HUD sets this.touchMove.
 		this.touchMove = { x: 0, y: 0 };
+		this.touchJump = false;
+		this.jumpQueued = false;
 		let lookTouch = null;
 		dom.addEventListener('touchstart', (e) => {
 			for (const t of e.changedTouches) if (t.clientX > window.innerWidth / 2) lookTouch = { id: t.identifier, x: t.clientX, y: t.clientY };
@@ -64,11 +74,15 @@ export class Player {
 		this.z = z;
 		this.yaw = yaw;
 		this.vx = this.vz = 0;
+		this.y = this.vy = 0;
+		this.onGround = true;
+		this.jumpQueued = false;
 	}
 
 	update(dt, seat) {
 		const k = this.keys;
 		if (this.riding) {
+			this.jumpQueued = false;
 			if (seat) {
 				this.x = seat.x;
 				this.z = seat.z;
@@ -108,11 +122,26 @@ export class Player {
 			this.x = nx;
 			this.z = nz;
 		}
+		// Jumping (Space, or the touch button). Holding it jumps again on landing.
+		if (this.onGround && (this.jumpQueued || k.has('Space') || this.touchJump)) {
+			this.vy = JUMP_SPEED;
+			this.onGround = false;
+		}
+		this.jumpQueued = false;
+		if (!this.onGround) {
+			this.vy -= GRAVITY * dt;
+			this.y += this.vy * dt;
+			if (this.y <= 0) {
+				this.y = 0;
+				this.vy = 0;
+				this.onGround = true;
+			}
+		}
 		const v = Math.hypot(this.vx, this.vz);
 		this.bob += v * dt * 2.1;
 		const bobY = v > 0.3 ? Math.sin(this.bob * 2) * 0.035 * Math.min(1, v / 2) : 0;
 		if (v > WALK_SPEED * 2) this.bob -= v * dt * 1.2; // longer strides, not a frantic shake
-		this.camera.position.set(this.x, this.eye + bobY, this.z);
+		this.camera.position.set(this.x, this.y + this.eye + (this.onGround ? bobY : 0), this.z);
 		this.camera.rotation.set(this.pitch, this.yaw, 0, 'YXZ');
 		// Widen the view while sprinting for a sense of speed.
 		const fov = 70 + 14 * Math.min(1, Math.max(0, (v - WALK_SPEED) / (SPRINT_SPEED - WALK_SPEED)));
