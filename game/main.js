@@ -321,9 +321,10 @@ async function main() {
 	 *   dt (real s, max 0.1), simDt (simulated s), unix, hours, dayIndex, frameNo,
 	 *   mode ('street' | 'metro'), sky ({ sunEl, moonEl, night 0..1, day 0..1, golden 0..1, illumination }),
 	 *   camera (the active one), player, world, vehicles (transit vehicles near the player), crowd,
-	 *   ride (null or { key }), danger (0..1), metro, quality.
+	 *   ride (null or { key }), danger (0..1), metro, transit (TransitSystem: departuresNear...),
+	 *   audio (AudioSystem: audio.event(name, data) for one-off sounds), quality.
 	 */
-	const frameState = { dt: 0, simDt: 0, unix, hours: 0, dayIndex: 0, frameNo: 0, mode, sky: st, camera, player, world, vehicles: [], crowd, ride, danger: 0, metro, quality: CONFIG.quality };
+	const frameState = { dt: 0, simDt: 0, unix, hours: 0, dayIndex: 0, frameNo: 0, mode, sky: st, camera, player, world, vehicles: [], transit, crowd, ride, danger: 0, metro, audio, quality: CONFIG.quality };
 
 	function loop(now) {
 		requestAnimationFrame(loop);

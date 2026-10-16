@@ -64,7 +64,7 @@ for (const s of shots) {
 	await page.waitForTimeout(s.wait || 2500);
 	const stats = await page.evaluate(() => { const g = window.__game; return { fps: g.stats.fps, people: g.stats.people, drawn: g.stats.drawn, vehicles: g.stats.vehicles, render: g.stats.render, street: g.world.streetAt(g.player.x, g.player.z) }; });
 	const file = path.join(outDir, `${s.name}.png`);
-	await page.screenshot({ path: file });
+	await page.screenshot({ path: file, timeout: 240000 });
 	report.shots.push({ name: s.name, file, ...stats });
 	console.log(`${s.name}: ${stats.render ? `${stats.render.drawCalls} draw calls, ${(stats.render.triangles / 1e6).toFixed(2)} M triangles` : ''}, ${stats.drawn} people drawn, street: ${stats.street || '-'}`);
 }
