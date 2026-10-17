@@ -24,22 +24,24 @@ vape sellers, safer mornings and dangerous nights. Hungarian UI.
 * Detail goes where the eye is: street level, 0–6 m above the pavement, within ~60 m.
 * Never at the cost of smoothness: it must stay fluid in a browser (see the budgets).
 
-## Reference material (read the ones for your area!)
+## Reference material
 
-Researchers wrote detailed descriptions (dimensions, colours as hex, layouts, sign texts) to
-`/tmp/claude-0/-home-user/7f11b543-7b0c-5cc5-91a5-20847955add3/scratchpad/ref/`:
+Two detailed researched references exist (dimensions, colours as hex, layouts, sign texts):
+`/tmp/claude-0/-home-user/7f11b543-7b0c-5cc5-91a5-20847955add3/scratchpad/ref/keleti-baross.md` (Keleti
+pályaudvar, Baross tér, Rákóczi út) and `.../ref/blaha.md` (Blaha Lujza tér after the 2021–23
+renovation, Corvin Áruház, Népszínház utca start). Read them if your area touches those places.
 
-| file | contents |
-|---|---|
-| `keleti-baross.md` | Keleti pályaudvar, Baross tér, Rákóczi út |
-| `blaha.md` | Blaha Lujza tér after the 2021–23 renovation, Corvin Áruház, Népszínház utca start |
-| `museum-palotanegyed.md` | Nemzeti Múzeum, Múzeumkert, Palotanegyed palaces, Múzeum körút |
-| `squares-churches-cemetery.md` | Erkel Színház, Rákóczi téri csarnok, churches, Kerepesi temető, Ludovika, Corvin mozi, **the typical Józsefváros tenement house** |
-| `bkk-vehicles.md` | the trams/buses on 23, 24, 28A, 99; catenary; stops and shelters |
-| `m2-metro.md` | Blaha and Keleti M2 stations, Alstom Metropolis trains, announcements |
-| `street-furniture-traffic.md` | lamps, signs, kerbs, paving, bollards, bins, parked cars, taxis, police |
-| `people.md` | clothing, body proportions, skin tones, activities, uniforms |
-| `render-tech.md` | three.js r170 addons, post-processing, crowd animation, budgets, assets |
+The other reference files named in the area briefs (`museum-palotanegyed.md`, `squares-…`,
+`bkk-vehicles.md`, `m2-metro.md`, `street-furniture-traffic.md`, `people.md`, `render-tech.md`) were
+**not written**. For those topics rely on (1) your own detailed knowledge of Budapest (recall the
+real facades, materials, colours, signage, vehicles, uniforms and dimensions carefully), (2) the real
+local data below (measure footprints, widths, positions from it), and (3) **at most 12 WebSearch
+calls** for the facts you are least sure of (load it with ToolSearch `select:WebSearch`; the budget
+is shared by all agents – if it says the budget is used up, don't retry or work around it). WebFetch
+does not work here (no DNS). The full BKK GTFS feed is in
+`/tmp/claude-0/-home-user/7f11b543-7b0c-5cc5-91a5-20847955add3/scratchpad/gtfs/` (stops.txt incl.
+station entrances, pathways.txt with stairs/escalators and their lengths, shapes.txt): grep/awk it,
+never read whole files (they are large).
 
 The real map is in `data/district8.json` (OpenStreetMap, baked by `.github/workflows/bake-data.yml`)
 and the exact BKK line shapes/stops in `data/bkk-lines.json`. Named OSM buildings include
@@ -135,7 +137,9 @@ locker|drinking|fountain|postbox|phone|recycling|toilets|clock|playground, name?
   you truly need a change elsewhere (a new frame field, a hook in `main.js`), make the smallest
   possible edit and list it under "Integration notes" in your final report.
 * Don't reformat or rename things other modules use. Keep public interfaces stable.
-* Commit in small steps on your branch (do not push). Commit messages: an imperative summary line,
+* **Commit after every milestone (at least every ~30 minutes of work)** on your branch, even if the
+  area is not finished: the session can be interrupted at any time and only committed work
+  survives. Do not push. Commit messages: an imperative summary line,
   a short body, and end with exactly these two lines:
 
       Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
