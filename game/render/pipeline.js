@@ -224,7 +224,15 @@ export function createPipeline(canvas, { quality = 'high' } = {}) {
 
 	function adapt(frame) {
 		const dt = frame ? Math.min(0.1, frame.dt || 0) : 0.016;
-		const target = frame && frame.mode === 'metro' ? 2.1 : frame && frame.sky && frame.sky.exposure ? frame.sky.exposure : 1.5;
+		let target = frame && frame.mode === 'metro' ? 2.1 : frame && frame.sky && frame.sky.exposure ? frame.sky.exposure : 1.5;
+		// at night the eye opens up in a dark side street and closes a little under a street lamp
+		const night = frame && frame.mode !== 'metro' && frame.sky ? frame.sky.night || 0 : 0;
+		if (night > 0.02 && frame.world && frame.world.lightAt && frame.player) {
+			if (state.localLight === undefined || !((frame.frameNo || 0) % 10)) {
+				try { state.localLight = frame.world.lightAt(frame.player.x, frame.player.z); } catch { state.localLight = 0.5; }
+			}
+			target *= 1 + (0.15 - 0.45 * state.localLight) * night;
+		}
 		const lt = Math.log(target);
 		if (state.logExp === null || !isFinite(state.logExp)) state.logExp = lt;
 		// the eye adapts to darkness more slowly than to brightness

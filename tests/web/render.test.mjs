@@ -89,6 +89,6 @@ assert.ok(TIERS.high.ao && !TIERS.medium.ao && !TIERS.low.post, 'tiers');
 const wbv = whiteBalance(1), tr = sunTransmittance(35, 0.12);
 near(wbv.x * tr[0], wbv.z * tr[2], 1e-9, 'white balance neutralises daylight');
 assert.ok(adaptedExposure(2.6) < adaptedExposure(0.5) && adaptedExposure(0.5) < adaptedExposure(0.01), 'darker scene, higher exposure');
-assert.ok(adaptedExposure(1e-6) <= 5.2 && adaptedExposure(100) >= 1.35, 'exposure clamped');
+assert.ok(adaptedExposure(1e-6) <= 3.6 && adaptedExposure(100) >= 1.35, 'exposure clamped');
 
 console.log('render tests passed');

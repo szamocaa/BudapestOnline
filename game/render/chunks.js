@@ -11,6 +11,12 @@
 //    near cascade first, its far cascade second, the far one with zero intensity), light 0 samples
 //    the near map where it covers the fragment and blends into the far map elsewhere; light 1 adds
 //    no light. Any other shadow setup renders exactly as stock three.js.
+//
+// 3. Street-canyon sky occlusion. The sky environment map (scene.environment) lights every surface
+//    as if it saw the whole sky; down in a street of 5-storey houses it sees much less. Standard
+//    materials with an environment map get their image-based diffuse light scaled by height above
+//    the street (SKYVIS_MIN at street level, full sky above SKYVIS_H metres), reflections a little.
+//    TODO(render): a real sky-visibility term (baked per city cell from building heights).
 import * as THREE from '../vendor/three.module.min.js';
 
 /** Shared fog parameters (plain objects so UniformsUtils.clone keeps them shared). */
@@ -133,8 +139,31 @@ const DIR_LOOP_TAIL_SKIP = /* glsl */ `		RE_Direct( directLight, geometryPositio
 #endif
 #if ( NUM_RECT_AREA_LIGHTS > 0 )`;
 
+export const SKYVIS_MIN = 0.62, SKYVIS_H = 24.0;
+const SKYVIS_DECL = /* glsl */ `
+#if defined( USE_ENVMAP ) && defined( STANDARD )
+	varying float vSkyY;
+#endif
+`;
+const SKYVIS_VERTEX = /* glsl */ `
+#if defined( USE_ENVMAP ) && defined( STANDARD )
+	vSkyY = worldPosition.y;
+#endif
+`;
+const SKYVIS_FRAGMENT = /* glsl */ `
+#if defined( USE_ENVMAP ) && defined( STANDARD )
+	float skyVis = mix( ${SKYVIS_MIN.toFixed(3)}, 1.0, smoothstep( 0.0, ${SKYVIS_H.toFixed(1)}, vSkyY ) );
+	#if defined( RE_IndirectDiffuse )
+		iblIrradiance *= skyVis;
+	#endif
+	#if defined( RE_IndirectSpecular )
+		radiance *= mix( 1.0, skyVis, 0.5 );
+	#endif
+#endif
+`;
+
 let installed = false;
-export const patchStatus = { fog: false, cascades: false };
+export const patchStatus = { fog: false, cascades: false, skyVis: false };
 
 function replaceOnce(src, a, b) {
 	const i = src.indexOf(a);
@@ -155,6 +184,13 @@ export function installChunks() {
 	add(THREE.UniformsLib.fog);
 	for (const k in THREE.ShaderLib) add(THREE.ShaderLib[k].uniforms);
 	patchStatus.fog = true;
+
+	if (C.worldpos_vertex.includes('worldPosition = modelMatrix * worldPosition;') && C.lights_fragment_maps.includes('iblIrradiance')) {
+		C.common = C.common + SKYVIS_DECL;
+		C.worldpos_vertex = C.worldpos_vertex + SKYVIS_VERTEX;
+		C.lights_fragment_maps = C.lights_fragment_maps + SKYVIS_FRAGMENT;
+		patchStatus.skyVis = true;
+	}
 
 	// Cascades: only if the stock chunk looks exactly as expected (otherwise stay stock).
 	let lf = C.lights_fragment_begin;

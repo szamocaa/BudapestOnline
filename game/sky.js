@@ -37,10 +37,13 @@ export function skyDirection(azimuthDeg, elevationDeg) {
  */
 export function adaptedExposure(illuminance) {
 	const e = Math.max(illuminance, 1e-3);
-	return Math.min(5.2, Math.max(1.35, 1.35 * Math.pow(2.6 / e, 0.42)));
+	return Math.min(3.6, Math.max(1.35, 1.35 * Math.pow(2.6 / e, 0.42)));
 }
 
 const tmpC = new THREE.Color();
+// scratch objects (no allocations per frame)
+const _x = new THREE.Vector3(), _y = new THREE.Vector3(), _p = new THREE.Vector3(), _fwd = new THREE.Vector3(), _c1 = new THREE.Vector3();
+const _amb = new THREE.Color(), _tint = new THREE.Color(), _white = new THREE.Color(1, 1, 1), _gnd = new THREE.Color(0.32, 0.25, 0.2), _zen = new THREE.Color();
 const col = (a, k = 1) => tmpC.setRGB(a[0] * k, a[1] * k, a[2] * k);
 
 export class Sky {
@@ -108,12 +111,12 @@ export class Sky {
 		const half = light.userData.half;
 		const texel = (2 * half) / light.shadow.mapSize.x;
 		const z = dir;
-		const x = new THREE.Vector3(0, 1, 0).cross(z);
+		const x = _x.set(z.z, 0, -z.x); // up x dir
 		if (x.lengthSq() < 1e-6) x.set(1, 0, 0);
 		x.normalize();
-		const y = new THREE.Vector3().crossVectors(z, x);
+		const y = _y.crossVectors(z, x);
 		const cx = Math.round(center.dot(x) / texel) * texel, cy = Math.round(center.dot(y) / texel) * texel, cz = center.dot(z);
-		const p = x.multiplyScalar(cx).addScaledVector(y, cy).addScaledVector(z, cz);
+		const p = _p.copy(x).multiplyScalar(cx).addScaledVector(y, cy).addScaledVector(z, cz);
 		light.target.position.copy(p);
 		light.position.copy(p).addScaledVector(dir, 900);
 		light.target.updateMatrixWorld();
@@ -205,13 +208,13 @@ export class Sky {
 		const tl = 0.2126 * T[0] + 0.7152 * T[1] + 0.0722 * T[2];
 		this.sun.intensity = sunK;
 		const shadows = tl > 0.004;
-		const camFwd = new THREE.Vector3(0, 0, -1);
+		const camFwd = _fwd.set(0, 0, -1);
 		if (this.lastCamera) { this.lastCamera.getWorldDirection(camFwd); camFwd.y = 0; if (camFwd.lengthSq() > 1e-6) camFwd.normalize(); }
-		const nearCenter = new THREE.Vector3(center.x, 0, center.z).addScaledVector(camFwd, this.nearHalf * 0.45);
+		const nearCenter = _c1.set(center.x, 0, center.z).addScaledVector(camFwd, this.nearHalf * 0.45);
 		this.fitShadow(this.sun, nearCenter, sunDir);
 		this.sun.shadow.autoUpdate = shadows;
 		if (this.sunFar) {
-			this.fitShadow(this.sunFar, new THREE.Vector3(center.x, 0, center.z).addScaledVector(camFwd, 90), sunDir);
+			this.fitShadow(this.sunFar, _c1.set(center.x, 0, center.z).addScaledVector(camFwd, 90), sunDir);
 			this.sunFar.shadow.needsUpdate = shadows && (this.frameNo % 3 === 1 || this.frameNo < 4);
 		}
 
@@ -257,26 +260,26 @@ export class Sky {
 		this.dome.starUniforms.pixelRatio.value = this.renderer.getPixelRatio();
 
 		// --- ambient fill
-		const cityAmb = new THREE.Color(0.55, 0.5, 0.5);
-		const skyTint = new THREE.Color(skyAvg[0], skyAvg[1], skyAvg[2]);
+		const cityAmb = _amb.setRGB(0.55, 0.5, 0.5);
+		const skyTint = _tint.setRGB(skyAvg[0], skyAvg[1], skyAvg[2]);
 		const st = skyTint.r + skyTint.g + skyTint.b;
 		if (st > 1e-5) skyTint.multiplyScalar(3 / st); else skyTint.setRGB(1, 1, 1);
-		this.hemi.color.copy(cityAmb).lerp(skyTint.lerp(new THREE.Color(1, 1, 1), 0.5), day);
-		this.hemi.groundColor.setRGB(0.42, 0.36, 0.3).lerp(new THREE.Color(0.32, 0.25, 0.2), night);
+		this.hemi.color.copy(cityAmb).lerp(skyTint.lerp(_white, 0.5), day);
+		this.hemi.groundColor.setRGB(0.42, 0.36, 0.3).lerp(_gnd, night);
 		this.hemi.intensity = 0.1 + 0.14 * day * (1 - 0.5 * coverage) + 0.2 * night;
 
 		// --- haze (aerial perspective): the horizon sky colour, glowing towards the sun
 		const fog = this.scene.fog;
 		const fogC = [skyAvg[0] + 0.022 * nk, skyAvg[1] + 0.016 * nk, skyAvg[2] + 0.012 * nk];
 		fog.color.setRGB(fogC[0], fogC[1], fogC[2]);
-		const beta = (aod / 1.2 + 0.0134) * 2.6e-3 * (1 + 0.25 * night + 0.6 * w.stratus * coverage);
+		const beta = (aod / 1.2 + 0.0134) * 1.9e-3 * (1 + 0.25 * night + 0.6 * w.stratus * coverage);
 		fog.density = beta;
 		const sunGlow = Math.max(0, 1 - sunDim * 0.8);
 		setFogAtmosphere({
 			sunDir,
 			sunGlow,
 			sunColor: col([Math.max(0, pr.to[0] * scale - fogC[0]), Math.max(0, pr.to[1] * scale - fogC[1]), Math.max(0, pr.to[2] * scale - fogC[2])]),
-			zenith: new THREE.Color(pr.mid[0] * scale + 0.004 * nk, pr.mid[1] * scale + 0.005 * nk, pr.mid[2] * scale + 0.008 * nk),
+			zenith: _zen.setRGB(pr.mid[0] * scale + 0.004 * nk, pr.mid[1] * scale + 0.005 * nk, pr.mid[2] * scale + 0.008 * nk),
 			falloff: 1 / 900,
 			baseHeight: 0,
 			maxOpacity: 1,

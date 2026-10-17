@@ -88,10 +88,10 @@ void main() {
 		float ph = dot(d, cloudLightDir);
 		// cirrus (high, thin, bright)
 		vec2 pH = viewOrigin.xz + d.xz / max(d.y, 0.03) * ${CLOUD_HIGH_H.toFixed(1)};
-		float ci = highCloud(pH) * fade;
+		float ci = highCloud(pH) * smoothstep(0.06, 0.4, d.y);
 		if (ci > 0.001) {
 			vec3 cc = cloudSun * (0.08 + 2.2 * hg(ph, 0.5)) * 0.9 + cloudAmbient * 0.75;
-			col = mix(col, cc, ci * 0.55 * cirrusVis);
+			col = mix(col, cc, ci * 0.42 * cirrusVis);
 			clear *= 1.0 - ci * 0.35;
 		}
 		// low clouds (cumulus / stratocumulus)
