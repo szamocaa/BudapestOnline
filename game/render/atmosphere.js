@@ -19,7 +19,7 @@ const HR = 8.0, HM = 1.2; // scale heights (km)
 /** Atmosphere parameters for a given aerosol optical depth (AOD at 550 nm: 0.05 clean … 0.4 smoggy). */
 export function atmosphereParams(aod = 0.15) {
 	const mieExt = aod / HM;
-	return { rayleigh: RAYLEIGH, ozone: OZONE, mieExt, mieScat: mieExt * 0.9, mieG: 0.78, ms: 0.35 };
+	return { rayleigh: RAYLEIGH, ozone: OZONE, mieExt, mieScat: mieExt * 0.9, mieG: 0.78, ms: 0.3 };
 }
 
 const clamp = (x, a, b) => (x < a ? a : x > b ? b : x);
@@ -254,7 +254,7 @@ export function dayWeather(day) {
 	const windDir = r() * Math.PI * 2;
 	return {
 		coverage, cumulus, stratus, cirrus,
-		aod: 0.08 + r() * 0.14 + (roll > 0.68 ? 0.05 : 0),
+		aod: 0.06 + r() * 0.12 + (roll > 0.68 ? 0.04 : 0),
 		windDir,
 		windSpeed: 4 + r() * 9, // m/s at cloud level
 		cirrusDir: windDir + (r() - 0.5) * 1.2,
@@ -319,4 +319,25 @@ export function equatorialToWorld(lst, latDeg) {
 	const ex = [X[0] * cl - Y[0] * sl, X[1] * cl - Y[1] * sl, X[2] * cl - Y[2] * sl];
 	const ey = [X[0] * sl + Y[0] * cl, X[1] * sl + Y[1] * cl, X[2] * sl + Y[2] * cl];
 	return [...ex, ...ey, ...Z];
+}
+
+// ---------------------------------------------------------------- direct sunlight (analytic)
+
+/** Relative optical air mass for a body at elevation elDeg (Kasten & Young 1989; ~38 at the horizon). */
+export function airMass(elDeg) {
+	const e = Math.max(elDeg, -1.5);
+	const s = Math.sin((Math.max(e, 0) * Math.PI) / 180);
+	return Math.min(40, 1 / (s + 0.50572 * Math.pow(e + 6.07995, -1.6364)));
+}
+
+/**
+ * Transmittance of direct sunlight through the whole atmosphere for a sun at elDeg and the given
+ * aerosol optical depth (aerosols are a little stronger in blue: Angstrom exponent ~1.3). [r, g, b]
+ */
+export function sunTransmittance(elDeg, aod = 0.15) {
+	const m = airMass(elDeg);
+	const ang = [0.8, 1.0, 1.32];
+	// Below the horizon the sun is hidden by the earth; fade over the last half degree (refraction).
+	const vis = smoothstep(-1.2, -0.3, elDeg);
+	return [0, 1, 2].map((k) => vis * Math.exp(-(RAYLEIGH[k] * HR + OZONE[k] * 15 + aod * ang[k]) * m));
 }
