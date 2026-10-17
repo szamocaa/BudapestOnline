@@ -57,15 +57,17 @@ export default {
 		const t0 = performance.now();
 		const P = new Parts();
 		const lay = layout(outline, byId);
-		buildFront(P, ctx, lay);
-		buildShed(P, lay);
-		buildWings(P, lay, byId);
+		const split = {};
+		const step = (name, fn) => { const t = P.tris; fn(); split[name] = P.tris - t; };
+		step('front', () => buildFront(P, ctx, lay));
+		step('shed', () => buildShed(P, lay));
+		step('wings', () => buildWings(P, lay, byId, split));
 		const hands = buildClockHands(ctx, lay);
 		// Baross tér: the Baross Gábor statue (OSM prop position) and the two shelters.
 		const st = (ctx.data.props || []).find((p) => p.kind === 'statue' && /Baross/.test(p.name || ''));
 		const [sx, sz] = st ? [st.x, st.z] : BAROSS;
-		buildBarossStatue(P, ctx, sx, sz);
-		for (const id of [1348982422, 1348982423]) if (byId.has(id)) buildShelter(P, ctx, byId.get(id).outer);
+		step('baross', () => buildBarossStatue(P, ctx, sx, sz));
+		step('shelters', () => { for (const id of [1348982422, 1348982423]) if (byId.has(id)) buildShelter(P, ctx, byId.get(id).outer); });
 		consumeProps(ctx, lay.fx + 2, lay.zc, 32);
 		consumeProps(ctx, sx, sz, 6);
 		// Collision: the whole station outline plus the projecting towers and portal.
@@ -73,7 +75,7 @@ export default {
 		for (const ring of lay.solids) ctx.addSolidRing(ring);
 		const { meshes } = P.build(ctx, { name: 'keleti' });
 		if (hands) meshes.push(hands);
-		this.stats = { tris: P.tris, meshes: meshes.length, ms: performance.now() - t0 };
+		this.stats = { tris: P.tris, meshes: meshes.length, ms: performance.now() - t0, split };
 	},
 };
 
@@ -235,7 +237,7 @@ function buildFront(P, ctx, lay) {
 	const zs = -2.0;
 	const scrOutline = [[TW, -0.3], [W - TW, -0.3], ...arch.pts.map((p) => p)];
 	P.save();
-	P.set({ ch: 'glass', c: mulc(C.glass, 0.32), lit: 0.95, glow: [1.0, 0.78, 0.5] });
+	P.set({ ch: 'glass', c: mulc(C.glass, 0.32), lit: 0.95, glow: [1.0, 0.66, 0.34] });
 	screenPanes(P, lay, arch, zs, r);
 	P.restore();
 	void scrOutline;
@@ -280,25 +282,35 @@ function buildFront(P, ctx, lay) {
 	// The crowning group: Steam on a globe with a cogwheel, wings spread; Neptune and Vulcan.
 	P.save();
 	P.set({ c: C.group, metal: 0.35, rough: 0.5, grime: 0.15, pat: 0, flood: 0.6 });
+	// Pyramid composition (~12 m wide, ~10 m tall): Steam stands on the globe on a drum, wings
+	// raised; Neptune and Vulcan sit lower on rock masses at the sides, leaning outwards.
 	const gy = atticTop + 3.0;
-	P.blob([uc, gy + 0.85, -1.05], 1.0, 0.9, 1.0, 12, 8); // globe
-	ringTorus(P, uc, gy + 0.85, 1.02, 0.05, 0.06, 18, -1.05, true);
-	P.translate(uc, gy + 1.65, -1.0);
-	figure(P, { h: 5.2, robe: 'gown', head: 'hair', wings: 2.4, armR: [0.4, 1.6, 0.6], holdR: 'wheel', armL: [0.3, 0.5, 1.1], holdL: 'staff', stride: 0.05, cloak: true });
+	P.lathe([[1.25, 0], [1.25, 0.15], [1.05, 0.3], [0.95, 1.2], [1.1, 1.35], [1.1, 1.45], [0, 1.45]], uc, gy, -1.05, { seg: 14 }); // drum
+	P.blob([uc, gy + 2.45, -1.05], 1.05, 1.0, 1.05, 14, 9); // globe
+	ringTorus(P, uc, gy + 2.45, 1.07, 0.06, 0.07, 20, -1.05, true); // equator band
+	P.save();
+	P.translate(uc, gy + 2.45, -1.05).rotateZ(0.4);
+	ringTorus(P, 0, 0, 1.07, 0.05, 0.06, 20, 0); // meridian band
+	P.restore();
+	P.translate(uc, gy + 3.35, -1.0);
+	figure(P, { h: 5.4, robe: 'gown', head: 'hair', wings: 2.1, armR: [0.5, 1.9, 0.5], holdR: 'wheel', armL: [0.4, 0.35, 1.3], holdL: 'staff', stride: 0.18, cloak: true });
 	P.restore();
 	for (const sx of [-1, 1]) {
 		P.save();
-		P.set({ c: C.group, metal: 0.35, rough: 0.5, grime: 0.15, pat: 0, flood: 0.6 });
-		P.translate(uc + sx * 4.6, atticTop + 1.42, -1.0).rotateY(-sx * 0.55);
+		P.set({ c: C.group, metal: 0.35, rough: 0.5, grime: 0.18, pat: 0, flood: 0.6 });
+		// Rock / drapery mass the god sits on, sloping out to the pedestal ends.
+		P.blob([uc + sx * 4.3, atticTop + 1.7, -1.0], 2.2, 0.75, 1.3, 10, 5);
+		P.blob([uc + sx * 2.4, atticTop + 1.9, -1.1], 1.3, 0.9, 1.1, 9, 5);
+		P.translate(uc + sx * 4.0, atticTop + 2.1, -0.85).rotateY(-sx * 0.5).rotateZ(sx * 0.12);
 		figure(P, sx < 0
-			? { h: 3.9, seated: true, robe: 'none', head: 'hair', armR: [0.6, 0.4, 0.2], holdR: 'trident', armL: [0.1, 0.5, 0.6], cloak: true }
-			: { h: 3.9, seated: true, robe: 'none', head: 'hat', armL: [0.9, 0.5, 0.5], holdL: 'hammer', armR: [0.2, 0.4, 0.8], cloak: true });
+			? { h: 4.6, seated: true, robe: 'none', head: 'hair', armR: [0.5, 0.9, 0.2], holdR: 'trident', armL: [0.2, 0.6, 0.5], cloak: true }
+			: { h: 4.6, seated: true, robe: 'none', head: 'hat', armL: [1.2, 0.6, 0.4], holdL: 'hammer', armR: [0.2, 0.5, 0.8], cloak: true });
 		P.restore();
 		// Attributes at their feet: an amphora (water) and an anvil (fire).
 		P.save();
 		P.set({ c: C.group, metal: 0.35, rough: 0.5, pat: 0, flood: 0.5 });
-		if (sx < 0) P.lathe([[0.0, 0], [0.25, 0.05], [0.42, 0.45], [0.3, 0.85], [0.15, 1.0], [0.2, 1.12], [0.0, 1.12]], uc - 6.5, atticTop + 1.42, -0.6, { seg: 10, smooth: true });
-		else { P.box(uc + 6.0, atticTop + 1.42, -1.0, uc + 6.9, atticTop + 2.1, -0.4, 'b'); P.box(uc + 5.8, atticTop + 2.1, -1.05, uc + 7.1, atticTop + 2.35, -0.35, 'b'); }
+		if (sx < 0) P.lathe([[0.0, 0], [0.3, 0.06], [0.5, 0.5], [0.36, 0.95], [0.18, 1.1], [0.24, 1.24], [0.0, 1.24]], uc - 6.6, atticTop + 1.42, -0.5, { seg: 10, smooth: true });
+		else { P.box(uc + 6.0, atticTop + 1.42, -1.0, uc + 6.9, atticTop + 2.2, -0.4, 'b'); P.box(uc + 5.7, atticTop + 2.2, -1.05, uc + 7.2, atticTop + 2.5, -0.35, 'b'); }
 		P.restore();
 	}
 
@@ -622,7 +634,7 @@ function shedRib(P, prof, x, w, h, where = null) {
 
 // ---------------------------------------------------------------- pavilions and side wings
 
-function buildWings(P, lay, byId) {
+function buildWings(P, lay, byId, split = {}) {
 	const parts = [ID.pavNW, ID.pavSW, ID.pavNE, ID.pavSE, ID.lotzN, ID.midS, ID.wingNW, ID.wingNE, ID.wingSW, ID.wingSE].map((id) => byId.get(id)).filter(Boolean);
 	const rings = new Map(parts.map((b) => [b.id, orientRing(b.outer)]));
 	const allRings = [...rings.values(), ringOf(byId.get(ID.hall)), ringOf(byId.get(ID.front))].filter(Boolean);
@@ -633,6 +645,7 @@ function buildWings(P, lay, byId) {
 	};
 	const r = rng(77);
 	for (const b of parts) {
+		const t0 = P.tris;
 		const ring = rings.get(b.id);
 		const pav = b.id === ID.pavNW || b.id === ID.pavSW || b.id === ID.pavNE || b.id === ID.pavSE || b.id === ID.lotzN || b.id === ID.midS;
 		const front = b.id === ID.pavNW || b.id === ID.pavSW;
@@ -645,7 +658,7 @@ function buildWings(P, lay, byId) {
 				plinth: 1.0, top: 17.0, pitch: 4.9, margin: 2.2, quoins: true,
 				floors: [
 					{ y0: 0, y1: 6.6, rustic: 0.55, win: { w: 2.3, h: 4.6, sill: 1.0, head: 'round', surround: 'frame', depth: 0.45 }, door: front ? 'centre' : null, doorW: 2.8, doorH: 5.6 },
-					{ y0: 6.6, y1: 12.6, win: { w: 2.0, h: 3.6, sill: 1.1, head: 'flat', surround: 'frame', pediment: 'cornice', depth: 0.38 }, pilasters: { w: 0.55, order: 'corinthian' } },
+					{ y0: 6.6, y1: 12.6, win: { w: 2.0, h: 3.6, sill: 1.1, head: 'flat', surround: 'frame', pediment: 'cornice', depth: 0.38 }, pilasters: front ? { w: 0.55, order: 'corinthian' } : null },
 					{ y0: 12.6, y1: 15.4, win: { w: 1.6, h: 1.25, sill: 0.7, head: 'flat', surround: 'frame', depth: 0.3 } },
 				],
 				bands: [{ y: 6.45, k: 1.0 }, { y: 12.45, k: 0.9 }],
@@ -653,7 +666,7 @@ function buildWings(P, lay, byId) {
 				parapet: { h: 0.9, kind: 'balustrade', ped: 4.9 },
 				roof: { type: 'mansard', y: 17.6, h: 4.6, inset: 1.6, h2: 1.4, inset2: 4.5, colour: C.slate, colour2: C.zinc, dormers: { pitch: 4.9, w: 1.2, h: 1.6, colour: C.stoneLit } },
 				litShare: 0.25,
-			}, { exterior: exteriorFor(ring), rng: r });
+			}, { exterior: exteriorFor(ring), rng: r , lowDetail: true });
 			// Iron cresting along the mansard top (a thin railing).
 			cresting(P, ring, 17.6 + 4.6 + 1.4 * 0.95, 4.3);
 		} else {
@@ -671,6 +684,7 @@ function buildWings(P, lay, byId) {
 				litShare: 0.18,
 			}, { exterior: exteriorFor(ring), rng: r });
 		}
+		split['part' + (b.id % 100)] = P.tris - t0;
 	}
 }
 
@@ -685,7 +699,7 @@ function cresting(P, ring, y, inset) {
 		P.save();
 		P.edge(e.a[0], e.a[1], e.b[0], e.b[1], y);
 		P.box(0, 0.55, -0.03, e.len, 0.6, 0.03, 'b');
-		for (let u = 0.4; u < e.len; u += 0.4) P.box(u - 0.015, 0, -0.015, u + 0.015, u % 1.2 < 0.4 ? 0.9 : 0.6, 0.015, 'b');
+		for (let u = 0.6, k = 0; u < e.len; u += 0.6, k++) P.box(u - 0.02, 0, -0.02, u + 0.02, k % 3 === 0 ? 0.9 : 0.6, 0.02, 'bt');
 		P.restore();
 	}
 	P.restore();

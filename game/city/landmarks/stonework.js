@@ -117,10 +117,13 @@ export class Parts {
 	tri(a, b, c) { this.buf().idx.push(a, b, c); this.tris++; }
 	/** A flat quad p0..p3 (counter-clockwise seen from the front), local coordinates. */
 	quad(p0, p1, p2, p3, uv = null, c = null) {
-		const ax = p1[0] - p0[0], ay = p1[1] - p0[1], az = p1[2] - p0[2];
-		const bx = p3[0] - p0[0], by = p3[1] - p0[1], bz = p3[2] - p0[2];
+		// Normal from the diagonals: also right for quads that collapse to a triangle (p0 = p1, as in
+		// the centre sectors of a fan). A zero normal would give NaN lighting (black holes + bloom).
+		const ax = p2[0] - p0[0], ay = p2[1] - p0[1], az = p2[2] - p0[2];
+		const bx = p3[0] - p1[0], by = p3[1] - p1[1], bz = p3[2] - p1[2];
 		let nx = ay * bz - az * by, ny = az * bx - ax * bz, nz = ax * by - ay * bx;
-		const l = Math.hypot(nx, ny, nz) || 1;
+		const l = Math.hypot(nx, ny, nz);
+		if (l < 1e-9) return; // fully degenerate: nothing to draw
 		nx /= l; ny /= l; nz /= l;
 		const u = uv || [0, 0, 1, 1];
 		const i0 = this.vert(p0[0], p0[1], p0[2], nx, ny, nz, u[0], u[1], c);
@@ -602,10 +605,12 @@ export function balustrade(P, x0, x1, y, { h = 1.0, spacing = 0.32, depth = 0.34
 	}
 	for (const px of peds) P.box(px - pedW / 2, y, z - pedW / 2, px + pedW / 2, y + h + 0.04, z + pedW / 2, 'b');
 	const n = Math.floor(len / spacing);
+	const r9 = depth * 0.3;
 	for (let i = 0; i < n; i++) {
 		const bx = x0 + (i + 0.5) * (len / n);
 		if (peds.some((p) => Math.abs(p - bx) < pedW / 2 + 0.08)) continue;
-		if (low) P.box(bx - 0.06, y + plinthH, z - 0.06, bx + 0.06, y + plinthH + bh, z + 0.06, 'bt');
+		// Low detail: a 4-sided vase (32 triangles instead of ~120) that keeps the silhouette.
+		if (low) P.lathe([[r9 * 0.9, 0], [r9 * 0.55, 0.16 * bh], [r9, 0.42 * bh], [r9 * 0.42, 0.76 * bh], [r9 * 0.85, bh]], bx, y + plinthH, z, { seg: 4, a0: Math.PI / 4, a1: Math.PI / 4 + TAU });
 		else P.lathe(balusterProfile(bh, depth * 0.3), bx, y + plinthH, z, { seg: 6 });
 	}
 }
@@ -845,13 +850,15 @@ export function figure(P, opts = {}) {
 	hold(opts.holdR, wr);
 	// Drapery / cloak behind.
 	if (opts.cloak) P.lathe([[0.25, seated ? 0.2 : 0.15], [0.24, 0.8], [0.22, sY - 0.05]], 0, 0, -0.06, { seg: 7, a0: Math.PI * 0.55, a1: Math.PI * 1.45 });
-	// Wings: thin curved slabs from the shoulder blades.
+	// Wings: raised, swept-back "Nike" wings from the shoulder blades (tips above the head, a
+	// scalloped feather edge below), angled back so they read as wings and not as a disc.
 	if (opts.wings) {
 		for (const sx of [-1, 1]) {
 			P.save();
-			P.translate(sx * 0.12, sY - 0.1, -0.12).rotateY(sx * 0.5).rotateZ(-sx * 0.35);
+			P.translate(sx * 0.1, sY - 0.08, -0.14).rotateY(sx * 0.75).rotateZ(-sx * 0.12);
 			const span = opts.wings;
-			const pts = [[0, 0], [sx * 0.15 * span, 0.35 * span], [sx * 0.42 * span, 0.62 * span], [sx * 0.62 * span, 0.55 * span], [sx * 0.55 * span, 0.2 * span], [sx * 0.42 * span, -0.15 * span], [sx * 0.2 * span, -0.45 * span], [0, -0.2]];
+			const pts = [[0, 0], [0.12, 0.42], [0.22, 0.78], [0.3, 1.0], [0.36, 0.92], [0.42, 0.72], [0.36, 0.62], [0.44, 0.44], [0.36, 0.34], [0.4, 0.14], [0.3, 0.06], [0.3, -0.16], [0.2, -0.2], [0.14, -0.38], [0.04, -0.2]]
+				.map(([x, y]) => [sx * x * span, y * span]);
 			const outline = sx > 0 ? pts : pts.slice().reverse();
 			P.panel(outline, [], 0.02);
 			P.panel(outline, [], -0.02, true);
@@ -1038,6 +1045,7 @@ uniform vec3 lmZenith;
 uniform vec3 lmHorizon;
 uniform vec3 lmGround;
 uniform vec3 lmWarm;
+uniform float lmFakeSky;
 varying vec3 vLmPos;
 varying vec3 vLmNrm;
 varying vec4 vLmSurf;
@@ -1051,8 +1059,11 @@ const GLASS_FRAG_EMIT = /* glsl */`
 	vec3 R = reflect(V, Nn);
 	float fres = 0.06 + 0.94 * pow(1.0 - max(dot(-V, Nn), 0.0), 4.0);
 	vec3 sky = R.y > 0.0 ? mix(lmHorizon, lmZenith, pow(clamp(R.y, 0.0, 1.0), 0.6)) : mix(lmHorizon, lmGround, clamp(-R.y * 3.0, 0.0, 1.0));
-	totalEmissiveRadiance += sky * fres * 0.9 * (1.0 - 0.6 * vLmExt.y * lmNight);
-	totalEmissiveRadiance += vLmSurf.rgb * vLmExt.y * lmNight * 1.7;
+	// scene.environment (the sky PMREM) already gives the daytime reflection; this fake sky only
+	// fills in where there is no environment map and fades at night.
+	totalEmissiveRadiance += sky * fres * lmFakeSky * (1.0 - 0.6 * vLmExt.y * lmNight);
+	// Warm interior light; kept moderate so the night exposure keeps it amber, not white.
+	totalEmissiveRadiance += vLmSurf.rgb * vLmExt.y * lmNight * 0.75;
 }
 `;
 
@@ -1101,11 +1112,12 @@ export function landmarkMaterials(ctx) {
 	const uniforms = {
 		lmDetail: { value: detailTexture() },
 		lmNight: { value: 0 },
-		lmFloodColor: { value: new THREE.Color(1.0, 0.78, 0.52).multiplyScalar(0.55) },
+		lmFloodColor: { value: new THREE.Color(1.0, 0.74, 0.46).multiplyScalar(0.34) },
 		lmZenith: { value: new THREE.Color(0x4a6fa5) },
 		lmHorizon: { value: new THREE.Color(0xa9c3dc) },
 		lmGround: { value: new THREE.Color(0x3a3834) },
 		lmWarm: { value: new THREE.Color(1.0, 0.72, 0.42) },
+		lmFakeSky: { value: 0.9 },
 	};
 	const solid = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, metalness: 0 });
 	patchSolid(solid, uniforms);
@@ -1134,6 +1146,7 @@ export function landmarkMaterials(ctx) {
 		uniforms.lmHorizon.value.copy(hz).multiplyScalar(0.55 + 0.45 * day);
 		uniforms.lmZenith.value.copy(z).multiplyScalar(0.7);
 		uniforms.lmGround.value.set(0x2c2a27).multiplyScalar(0.3 + 0.7 * day);
+		uniforms.lmFakeSky.value = ctx.scene && ctx.scene.environment ? 0.08 : 0.9;
 	});
 	return mats;
 }
