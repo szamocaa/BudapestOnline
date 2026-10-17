@@ -161,4 +161,51 @@ assert.ok(FB.idx.length > 0 && FB.chunk.every((c) => c === 7), 'far shell carrie
 	assert.deepEqual(faceNormal([[0, 0, 0], [1e-7, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]]).map(Math.round), [0, 0, 1], 'Newell normal survives a degenerate first corner');
 }
 
+// --- shop signs: content per shop kind, shared atlas cells, geometry on the fascia facing out
+{
+	const { signContent, SignCells, layoutSigns, cellUV, ATLAS } = await import('../../game/city/facadesSigns.js');
+	const { GLASS } = await import('../../game/city/facadesGeom.js');
+	const tob = signContent({ poi: { kind: 'tobacco', name: 'Nemzeti Dohánybolt' }, mode: GLASS.TOBACCO, seed: 0.3 });
+	assert.equal(tob.key, 'tobacco', 'every tobacconist shares one sign');
+	assert.equal(tob.text, 'NEMZETI DOHÁNYBOLT');
+	const vape = signContent({ poi: { kind: 'vape', name: 'Cloud Vape' }, mode: GLASS.VAPE, seed: 0.7 });
+	assert.ok(vape.glow > 2 && vape.design === 'neon', 'vape shops glow');
+	const ph = signContent({ poi: { kind: 'pharmacy', name: 'Szent József Gyógyszertár' }, mode: GLASS.PHARMACY, seed: 0.1 });
+	assert.ok(ph.blade && ph.sub === '', 'pharmacy: projecting cross, no repeated "gyógyszertár"');
+	assert.equal(signContent({ poi: null, mode: GLASS.EMPTY, seed: 0.2 }).place, 'window', 'to-let poster inside the window');
+	assert.equal(signContent({ poi: null, mode: GLASS.SHOP, seed: 0.1 }), null, 'some unnamed shops have no sign');
+	assert.ok(signContent({ poi: null, mode: GLASS.SHOP, seed: 0.9 }).key.startsWith('gen:'), 'unnamed shops get a trade sign');
+	assert.equal(signContent({ poi: { kind: 'school', name: 'Iskola' }, mode: GLASS.SHOP, seed: 0.9 }), null);
+	// Cells: shared by key, reference counted, recycled oldest-released first, null when all are in use.
+	const cells = new SignCells(2);
+	const a = cells.acquire('a'), a2 = cells.acquire('a'), b = cells.acquire('b');
+	assert.ok(a.fresh && !a2.fresh && a.cell === a2.cell && b.cell !== a.cell);
+	assert.equal(cells.acquire('c'), null, 'full atlas');
+	cells.release('b');
+	const c = cells.acquire('c');
+	assert.ok(c.fresh && c.cell === b.cell, 'released cell reused');
+	cells.release('a'); cells.release('a'); cells.release('c');
+	assert.equal(cells.acquire('a').fresh, false, 'a released key keeps its art until the cell is reused');
+	const uv = cellUV(ATLAS.CELLS - 1);
+	assert.ok(uv.every((v) => v >= 0 && v <= 1) && uv[0] < uv[2] && uv[1] < uv[3], 'cell uv inside the atlas');
+	// Geometry: the fascia sign of the test street's tobacconist faces the street and reads left to right.
+	const reqs = out.signs;
+	assert.ok(reqs.length > 0, 'shopfronts emit sign requests');
+	for (const flipRing of [false, true]) {
+		const F = flipRing ? { ax: 10, az: 0, ux: -1, uz: 0, nx: 0, nz: -1 } : { ax: 0, az: 0, ux: 1, uz: 0, nx: 0, nz: -1 };
+		const req = { F, t0: 1, t1: 4.6, y0: 4.2, y1: 4.9, d: 0.06, poi: { kind: 'tobacco', name: '' }, mode: GLASS.TOBACCO, seed: 0.5, bottom: 0 };
+		const { buf, keys } = layoutSigns([req], () => 3);
+		assert.deepEqual(keys, ['tobacco']);
+		const p = buf.pos, i = buf.idx;
+		// Faces -z (towards the street at z < 0): winding normal points along -z.
+		const ax = p[i[1] * 3] - p[i[0] * 3], az = p[i[1] * 3 + 2] - p[i[0] * 3 + 2], bx = p[i[2] * 3] - p[i[0] * 3], by = p[i[2] * 3 + 1] - p[i[0] * 3 + 1], bz = p[i[2] * 3 + 2] - p[i[0] * 3 + 2];
+		const gz = ax * by - (p[i[1] * 3 + 1] - p[i[0] * 3 + 1]) * bx;
+		assert.ok(gz < 0, 'sign faces the street');
+		assert.ok(p.every((v, k) => k % 3 !== 2 || v < 0), 'sign stands proud of the wall');
+		// Seen from the street (looking +z), the viewer's right is -x: u must grow towards -x.
+		const u0 = buf.uv[0], u1 = buf.uv[2], x0 = p[0], x1 = p[3];
+		assert.ok((u1 - u0) * (x1 - x0) < 0, `text reads left to right (${flipRing ? 'reversed' : 'forward'} wall)`);
+	}
+}
+
 console.log('buildings tests passed');

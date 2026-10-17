@@ -46,12 +46,13 @@ export function buildShopSigns(ctx) {
 		return mesh;
 	};
 
-	// Shops that buildings.js put behind a ground-floor wall: hang the sign on that wall's fascia
-	// band (between the shop window head and the first floor), just proud of the plaster.
-	// TODO(buildings): centre on the exact shop bay chosen in facadesGeom.groundPlan.
+	// Shops that buildings.js put behind a ground-floor shopfront get their fascia sign from the
+	// streamed chunk sign meshes (facadesSigns.js: one atlas, exact bay, no per-shop draw call).
+	// Only shops without a front (or without the atlas: no canvas) get a separate sign here.
 	const fronts = ctx.shopFronts || new Map();
 	const place = (p, width, height, mat, y) => {
 		const f = fronts.get(p);
+		if (f && ctx.chunkSigns) return null;
 		if (!f) return placeOnWall(p.x, p.z, width, height, mat, y ?? 3.3);
 		const h = Math.min(height, Math.max(0.45, (f.top - f.y) * 2 - 0.05));
 		const mesh = new THREE.Mesh(signGeo, mat);
