@@ -820,16 +820,9 @@ function roofDetail(B, info, r) {
 	const chimneys = [];
 	for (const f of roof.faces) {
 		const pts = f.pts;
-		let nx, ny, nz;
-		{
-			const [a, b, c] = pts;
-			const ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2];
-			const vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2];
-			nx = uy * vz - uz * vy; ny = uz * vx - ux * vz; nz = ux * vy - uy * vx;
-			const l = Math.hypot(nx, ny, nz);
-			if (l < 1e-9) continue;
-			nx /= l; ny /= l; nz /= l;
-		}
+		const fn = faceNormal(pts);
+		if (!fn) continue;
+		const [nx, ny, nz] = fn;
 		const isGable = f.kind === 'gable';
 		const layer = isGable ? gableLay : f.kind === 'flat' ? LAYER.FLAT : lay;
 		const col = isGable ? gableCol : f.kind === 'flat' ? hexRgb('#6e6c68') : rc;
@@ -871,8 +864,10 @@ function roofDetail(B, info, r) {
 		const F = new Frame().set(seg, x + z);
 		box(B, F, 0, w * 2, y - 0.8, y + h, -d, d, brick, LAYER.BRICK, 0.55, 31, 0.9);
 		box(B, F, -0.05, w * 2 + 0.05, y + h, y + h + 0.1, -d - 0.05, d + 0.05, cap, LAYER.CONCRETE, 0.6, 31);
-		// The back face (box() skips it).
-		side(B, { X: (t, dd) => F.X(t, dd), Z: (t, dd) => F.Z(t, dd), ux: -uz, uz: ux, uo: 0 }, -d, y - 0.8, y + h, 0, w * 2, -1, brick, LAYER.BRICK, 0.6);
+		// The back face at depth -d, facing away from the wall normal (box() only draws the front).
+		setP(F, 0, w * 2, y - 0.8, -d); setP(F, 1, 0, y - 0.8, -d); setP(F, 2, 0, y + h, -d); setP(F, 3, w * 2, y + h, -d);
+		UVS[0] = 0; UVS[1] = y - 0.8; UVS[2] = w * 2; UVS[3] = y - 0.8; UVS[4] = w * 2; UVS[5] = y + h; UVS[6] = 0; UVS[7] = y + h;
+		B.quad(P, -F.nx, 0, -F.nz, UVS, brick, LAYER.BRICK, 0.6, 0.6, 0.6, 0.6);
 	}
 }
 
@@ -956,13 +951,9 @@ export function buildFar(info, FB, ch, inset = 0.7) {
 	const z4 = [0, 0, 0, 0];
 	for (const f of roof.faces) {
 		const pts = f.pts;
-		const [a, b2, c] = pts;
-		const ux = b2[0] - a[0], uy = b2[1] - a[1], uz = b2[2] - a[2];
-		const vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2];
-		let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
-		const l = Math.hypot(nx, ny, nz);
-		if (l < 1e-9) continue;
-		nx /= l; ny /= l; nz /= l;
+		const fn = faceNormal(pts);
+		if (!fn) continue;
+		const [nx, ny, nz] = fn;
 		const col = f.kind === 'gable' ? firewallCol : f.kind === 'flat' ? hexRgb('#6e6c68') : rc;
 		const kind = f.kind === 'gable' ? 3 : 0;
 		const f2 = [gTop, fH, -1, kind + (f.kind === 'flat' ? 0.5 : 0.25)];
@@ -970,6 +961,22 @@ export function buildFar(info, FB, ch, inset = 0.7) {
 		for (const p of pts) FB.vert(p[0], p[1], p[2], nx, ny, nz, col, z4, f2, ch);
 		for (let k = 1; k + 1 < pts.length; k++) FB.idx.push(base, base + k, base + k + 1);
 	}
+}
+
+/**
+ * Unit normal of a planar polygon [[x, y, z]...] by Newell's method (robust when the first three
+ * corners are nearly collinear, unlike a single cross product), following the polygon's winding.
+ */
+export function faceNormal(pts) {
+	let nx = 0, ny = 0, nz = 0;
+	for (let i = 0, n = pts.length; i < n; i++) {
+		const a = pts[i], b = pts[(i + 1) % n];
+		nx += (a[1] - b[1]) * (a[2] + b[2]);
+		ny += (a[2] - b[2]) * (a[0] + b[0]);
+		nz += (a[0] - b[0]) * (a[1] + b[1]);
+	}
+	const l = Math.hypot(nx, ny, nz);
+	return l < 1e-9 ? null : [nx / l, ny / l, nz / l];
 }
 
 function orientIdx(B, b, nx, ny, nz) {
