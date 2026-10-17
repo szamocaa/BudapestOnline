@@ -259,6 +259,9 @@ vec3 bumpPerturb(vec3 surf_pos, vec3 surf_norm, vec2 dHdxy, float faceDirection)
 `;
 
 function patch(mat, uniforms, edit) {
+	// three.js caches programs by onBeforeCompile's source text, which is the same closure for every
+	// material here: give each its own key or they would all share the first one's shader.
+	mat.customProgramCacheKey = () => 'bld-' + mat.name;
 	mat.onBeforeCompile = (sh) => {
 		Object.assign(sh.uniforms, uniforms);
 		edit(sh);
@@ -322,7 +325,7 @@ export function glassMaterial(U) {
 		sh.vertexShader = sh.vertexShader
 			.replace('#include <common>', `#include <common>
 attribute vec2 wtan; attribute vec4 win; attribute vec4 win2;
-varying vec2 vPane; varying vec4 vWin; varying vec4 vWin2; varying vec3 vWPos; varying vec3 vT; varying vec3 vNw;`)
+varying vec2 vPane; flat varying vec4 vWin; flat varying vec4 vWin2; varying vec3 vWPos; varying vec3 vT; varying vec3 vNw;`)
 			.replace('#include <uv_vertex>', `#include <uv_vertex>
 vPane = uv; vWin = win; vWin2 = win2; vT = vec3(wtan.x, 0.0, wtan.y); vNw = normal;`)
 			.replace('#include <project_vertex>', `#include <project_vertex>
@@ -330,41 +333,56 @@ vWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;`);
 		sh.fragmentShader = sh.fragmentShader
 			.replace('#include <common>', `#include <common>
 ${LAYER_PARS}
-varying vec2 vPane; varying vec4 vWin; varying vec4 vWin2; varying vec3 vWPos; varying vec3 vT; varying vec3 vNw;
+varying vec2 vPane; flat varying vec4 vWin; flat varying vec4 vWin2; varying vec3 vWPos; varying vec3 vT; varying vec3 vNw;
 vec3 framePal(float i) {
 	return i < 0.5 ? vec3(0.78, 0.78, 0.76) : i < 1.5 ? vec3(0.16, 0.09, 0.05) : i < 2.5 ? vec3(0.62, 0.56, 0.44) : i < 3.5 ? vec3(0.22, 0.23, 0.24) : i < 4.5 ? vec3(0.07, 0.15, 0.09) : vec3(0.025);
 }
+// Shop interior: parallax layers (shelves on the back wall, floor, a band of ceiling lights).
+// TODO(buildings): the ray-box room below speckles for deep shop rooms in SwiftShader; revisit on GPUs.
+vec4 shopAt(vec2 pp, vec3 Vt, float seed) {
+	vec2 q = pp + Vt.xy / max(Vt.z, 0.25) * vec2(0.22, 0.28);
+	float shelf = smoothstep(0.0, 0.08, abs(fract(q.y * 3.2) - 0.5) - 0.32);
+	vec3 goods = vec3(0.45 + 0.4 * bHash(floor(q * vec2(7.0, 3.2)) + seed), 0.4 + 0.35 * bHash(floor(q * vec2(5.0, 3.2)) + seed + 3.0), 0.35 + 0.4 * bHash(floor(q * vec2(6.0, 3.2)) + seed + 7.0));
+	vec3 c = mix(goods, vec3(0.75, 0.73, 0.7), shelf);
+	c = mix(vec3(0.42, 0.4, 0.37), c, smoothstep(0.0, 0.18, q.y));
+	c = mix(c, vec3(0.9, 0.9, 0.88), smoothstep(0.9, 1.0, q.y));
+	return vec4(c, 0.35 + 0.65 * smoothstep(0.2, 1.0, pp.y));
+}
 // Fake room behind the pane (interior mapping): o = pane point, d = view ray in room space.
-vec3 roomAt(vec2 pp, vec3 Vt, float seed, float shop, out float lampK) {
+vec4 roomAt(vec2 pp, vec3 Vt, float seed, float shop) {
 	vec3 o = vec3(mix(-0.36, 0.36, pp.x), mix(-0.38, 0.6, pp.y), 0.0);
 	vec3 d = Vt * vec3(1.0 / 1.9, 1.0 / 1.45, 1.0 / (shop > 0.5 ? 6.0 : 4.2));
 	d.z = max(d.z, 1e-3);
 	d.x = abs(d.x) < 1e-4 ? 1e-4 : d.x;
 	d.y = abs(d.y) < 1e-4 ? 1e-4 : d.y;
 	float tx = (sign(d.x) - o.x) / d.x, ty = (sign(d.y) - o.y) / d.y, tz = 1.0 / d.z;
-	float t = min(min(tx, ty), tz);
+	// Which face the ray hits, by ordered comparisons (float equality is unreliable on some GPUs).
+	bool back = tz <= tx && tz <= ty, flr = !back && ty <= tx;
+	float t = back ? tz : flr ? ty : tx;
 	vec3 h = o + d * t;
 	float s2 = fract(seed * 7.13);
 	vec3 wall = mix(vec3(0.62, 0.58, 0.5), vec3(0.55, 0.62, 0.55), step(0.6, s2));
 	wall = mix(wall, vec3(0.7, 0.66, 0.6), step(0.85, s2));
 	vec3 c;
-	if (t == tz) {
+	if (back) {
 		c = wall * 0.9;
 		// Furniture or shelves against the back wall.
 		float f = fract(seed * 13.7);
 		if (shop > 0.5) { float row = fract(h.y * 2.5); c = mix(c, vec3(0.4 + 0.5 * bHash(floor(h.xy * vec2(9.0, 2.5))), 0.35 + 0.4 * bHash(floor(h.xy * vec2(7.0, 2.5)) + 3.0), 0.3 + 0.5 * bHash(floor(h.xy * vec2(5.0, 2.5)) + 9.0)), step(0.25, row) * step(h.y, 0.6)); }
 		else if (h.y < -0.2 + f * 0.5 && abs(h.x - (f - 0.5)) < 0.45) c = vec3(0.18, 0.13, 0.1) * (0.6 + f);
 		else if (abs(h.x + 0.3 - f * 0.4) < 0.18 && abs(h.y - 0.15) < 0.16) c = vec3(0.35, 0.3, 0.26) + 0.3 * f; // a picture frame
-	} else if (t == ty) c = d.y < 0.0 ? vec3(0.28, 0.18, 0.11) * (0.8 + 0.4 * step(0.5, fract(h.x * 4.0 + h.z * 2.0))) : vec3(0.82, 0.8, 0.76);
+	} else if (flr) c = d.y < 0.0 ? vec3(0.3, 0.2, 0.12) : vec3(0.82, 0.8, 0.76);
 	else c = wall * 0.8;
 	vec3 L = vec3(0.0, 0.85, 0.5);
-	lampK = 1.0 / (1.0 + 3.0 * dot(h - L, h - L));
-	return c * (0.5 + 0.5 * smoothstep(1.0, 0.2, t / tz));
+	float lampK = 1.0 / (1.0 + 3.0 * clamp(dot(h - L, h - L), 0.0, 20.0));
+	return vec4(c * (0.5 + 0.5 * (1.0 - smoothstep(0.2, 1.0, t / tz))), lampK);
 }`)
 			.replace('#include <map_fragment>', `
 vec2 sz = vWin.xy;
 vec2 p = vPane * sz;
-float mode = vWin.w, seed = vWin.z;
+// Per-window data is flat: interpolating a constant can give 0.99999994, which breaks == tests
+// and the hashes (visible as speckle).
+float mode = floor(vWin.w + 0.5), seed = vWin.z;
 float blind = vWin2.x, curtain = vWin2.y, frameI = vWin2.z, flags = vWin2.w;
 vec3 V = normalize(vWPos - cameraPosition);
 vec3 Nw = normalize(vNw);
@@ -406,7 +424,7 @@ if (mode < 0.5 || mode == 4.0) {
 	// Fanlight over a gate: radial bars and a ring.
 	vec2 q = vec2(vPane.x - 0.5, vPane.y) * vec2(2.0, 1.0);
 	float r = length(q), a = atan(q.y, q.x);
-	float bar = step(abs(fract(a / 3.14159 * 6.0 + 0.5) - 0.5), 0.06) + step(abs(r - 0.42), 0.035) + step(0.93, r) + step(vPane.y, 0.04);
+	float bar = step(abs(fract(a / 3.14159 * 4.0 + 0.5) - 0.5), 0.07) + step(abs(r - 0.45), 0.05) + step(0.92, r) + step(vPane.y, 0.05);
 	if (bar > 0.5) { opaque = vec3(0.04); opaqueK = 1.0; rough = 0.5; }
 	lit = step(0.45, fract(seed * 5.3)) * uNight;
 	lightC = vec3(1.0, 0.75, 0.42);
@@ -448,15 +466,16 @@ R = normalize(R);
 vec3 refl = R.y > 0.32 ? mix(uSkyHor, uSkyTop, smoothstep(0.32, 0.9, R.y)) : R.y > 0.0 ? mix(uStreet * 2.2, uSkyHor * 0.8, smoothstep(0.12, 0.32, R.y)) * (0.75 + 0.5 * step(0.5, fract(R.x * 9.0 + R.z * 9.0))) : uStreet;
 float cosT = clamp(-dot(V, Nw), 0.0, 1.0);
 float fres = 0.12 + 0.88 * pow(1.0 - cosT, 5.0);
-float lampK;
 bool roomy = mode < 0.5 || mode == 4.0 || mode == 3.0 || (mode >= 1.0 && mode != 2.0 && mode != 6.0 && mode != 8.0);
-vec3 room = roomy ? roomAt(vPane, Vt, seed, mode == 1.0 || mode >= 9.0 ? 1.0 : 0.0, lampK) : vec3(0.05);
-if (!roomy) lampK = 0.6;
+vec4 roomL = vec4(0.05, 0.05, 0.05, 0.6);
+if (mode == 1.0 || mode >= 9.0) roomL = shopAt(vPane, Vt, seed);
+else if (roomy) roomL = roomAt(vPane, Vt, seed, 0.0);
+vec3 room = roomL.rgb; float lampK = roomL.a;
 // Net curtains (függöny) in most flats.
 float veil = (mode < 0.5 && curtain < 0.7) ? 0.72 * step(p.y, sz.y * (curtain < 0.35 ? 0.98 : 0.72)) : 0.0;
 vec3 lace = vec3(0.85, 0.84, 0.8) * (0.9 + 0.1 * sin(p.x * 60.0 + sin(p.y * 40.0)));
 float inside = (1.0 - fres);
-vec3 transmitted = room * (uDayLight * 0.16 + lit * lightC * (0.6 + 1.6 * lampK) * (mode >= 1.0 && mode != 4.0 ? 1.4 : 1.0));
+vec3 transmitted = room * (uDayLight * 0.16 + lit * lightC * (0.6 + 1.6 * lampK) * (mode >= 1.0 && mode != 4.0 ? 0.38 + 0.6 * uNight : 1.0));
 if (mode == 7.0) transmitted = (room * 0.25 + vec3(0.9, 0.1, 0.8) * smoothstep(0.08, 0.0, abs(vPane.y - 0.92)) + vec3(0.1, 0.9, 1.0) * smoothstep(0.1, 0.0, abs(vPane.x - 0.08))) * (0.3 + 1.7 * lit);
 transmitted = mix(transmitted, lace * (uDayLight * 0.18 + lit * lightC * 0.9), veil);
 vec3 glassE = transmitted * inside + refl * fres * (0.7 + 0.6 * uDayLight);
@@ -481,7 +500,7 @@ export function farMaterial(U) {
 			.replace('#include <common>', `#include <common>
 attribute vec4 f1; attribute vec4 f2; attribute float chunk;
 uniform sampler2D uDetail;
-varying vec4 vF1; varying vec4 vF2; varying vec3 vWPos; varying vec3 vWN;`)
+varying vec4 vF1; flat varying vec4 vF2; varying vec3 vWPos; varying vec3 vWN;`)
 			.replace('#include <uv_vertex>', `#include <uv_vertex>
 vF1 = f1; vF2 = f2; vWN = normal;`)
 			.replace('#include <project_vertex>', `#include <project_vertex>
@@ -493,7 +512,7 @@ vWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;
 		sh.fragmentShader = sh.fragmentShader
 			.replace('#include <common>', `#include <common>
 ${LAYER_PARS}
-varying vec4 vF1; varying vec4 vF2; varying vec3 vWPos; varying vec3 vWN;`)
+varying vec4 vF1; flat varying vec4 vF2; varying vec3 vWPos; varying vec3 vWN;`)
 			.replace('#include <color_fragment>', `
 float kind = floor(vF2.w + 0.001), seedF = fract(vF2.w);
 float y = vWPos.y, u = vF1.x, gTop = vF2.x, fH = max(vF2.y, 2.5), topY = vF2.z;

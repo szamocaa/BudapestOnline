@@ -880,10 +880,11 @@ function roofDetail(B, info, r) {
 
 /**
  * The simple shell of one building for the far level of detail and for shadows: one quad per wall
- * (exposed walls set in by `inset` so recessed windows of the detailed facade stay in light),
+ * (exposed walls set in by `inset`, deeper than any window or gate recess, so the shell never
+ * shadows the glazing of the detailed facade and causes no shadow acne on it),
  * firewall bands, the roof and a cornice slab. ch = chunk index (hidden while the detail is shown).
  */
-export function buildFar(info, FB, ch, inset = 0.32) {
+export function buildFar(info, FB, ch, inset = 0.7) {
 	ringLinks(info);
 	const fy = info.floorY;
 	const L = info.levels;

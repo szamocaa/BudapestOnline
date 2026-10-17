@@ -170,8 +170,15 @@ export function planBuildings(data, { suppressed = new Set() } = {}) {
 			if (t1 > t2) [t1, t2] = [t2, t1];
 			t1 = Math.max(0, t1); t2 = Math.min(e.len, t2);
 			if (t2 - t1 < 0.25) continue;
-			// Only a neighbour on the outer side covers this wall (an overlapping duplicate inside does not).
-			if (f.nx * e.nx + f.nz * e.nz > 0.5) continue;
+			if (f.nx * e.nx + f.nz * e.nz > 0.5) {
+				// Same-facing overlap: two OSM outlines share this facade (a block outline over its houses,
+				// a part over its parent). Drawing both would z-fight, so the smaller building (or the later
+				// id) yields that stretch and treats it as covered by the other.
+				info.sameFacing = (info.sameFacing || 0) + 1;
+				const yields = info.area < f.info.area - 1 || (Math.abs(info.area - f.info.area) <= 1 && info.id > f.info.id);
+				if (yields) e.cover.push({ t0: t1, t1: t2, nb: f.info, dup: true });
+				continue;
+			}
 			e.cover.push({ t0: t1, t1: t2, nb: f.info });
 			info.nbLen.set(f.info, (info.nbLen.get(f.info) || 0) + (t2 - t1));
 		}
@@ -254,7 +261,7 @@ export function planBuildings(data, { suppressed = new Set() } = {}) {
 				if (t1 - t0 < 0.02) continue;
 				const tm = (t0 + t1) / 2;
 				let top = -1, nbBase = 0, nb = null;
-				for (const c of e.cover) if (c.t0 <= tm && c.t1 >= tm && c.nb.base < 1.5 && c.nb.wallTop > top) { top = c.nb.wallTop; nb = c.nb; nbBase = c.nb.base; }
+				for (const c of e.cover) if (c.t0 <= tm && c.t1 >= tm && (c.nb.base < 1.5 || c.dup) && c.nb.wallTop > top) { top = c.nb.wallTop; nb = c.nb; nbBase = c.nb.base; }
 				pieces.push({ t0, t1, covered: top >= 0, top, nb, nbBase });
 			}
 			// Merge neighbouring pieces with the same cover; swallow slivers.
