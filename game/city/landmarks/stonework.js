@@ -1063,7 +1063,7 @@ const GLASS_FRAG_EMIT = /* glsl */`
 	// fills in where there is no environment map and fades at night.
 	totalEmissiveRadiance += sky * fres * lmFakeSky * (1.0 - 0.6 * vLmExt.y * lmNight);
 	// Warm interior light; kept moderate so the night exposure keeps it amber, not white.
-	totalEmissiveRadiance += vLmSurf.rgb * vLmExt.y * lmNight * 0.75;
+	totalEmissiveRadiance += vLmSurf.rgb * vLmExt.y * lmNight * 0.45;
 }
 `;
 
@@ -1112,7 +1112,7 @@ export function landmarkMaterials(ctx) {
 	const uniforms = {
 		lmDetail: { value: detailTexture() },
 		lmNight: { value: 0 },
-		lmFloodColor: { value: new THREE.Color(1.0, 0.74, 0.46).multiplyScalar(0.34) },
+		lmFloodColor: { value: new THREE.Color(1.0, 0.66, 0.36).multiplyScalar(0.34) },
 		lmZenith: { value: new THREE.Color(0x4a6fa5) },
 		lmHorizon: { value: new THREE.Color(0xa9c3dc) },
 		lmGround: { value: new THREE.Color(0x3a3834) },

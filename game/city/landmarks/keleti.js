@@ -68,6 +68,7 @@ export default {
 		const [sx, sz] = st ? [st.x, st.z] : BAROSS;
 		step('baross', () => buildBarossStatue(P, ctx, sx, sz));
 		step('shelters', () => { for (const id of [1348982422, 1348982423]) if (byId.has(id)) buildShelter(P, ctx, byId.get(id).outer); });
+		step('terraces', () => buildTerraces(P, ctx, byId.get(4202804)));
 		consumeProps(ctx, lay.fx + 2, lay.zc, 32);
 		consumeProps(ctx, sx, sz, 6);
 		// Collision: the whole station outline plus the projecting towers and portal.
@@ -237,7 +238,7 @@ function buildFront(P, ctx, lay) {
 	const zs = -2.0;
 	const scrOutline = [[TW, -0.3], [W - TW, -0.3], ...arch.pts.map((p) => p)];
 	P.save();
-	P.set({ ch: 'glass', c: mulc(C.glass, 0.32), lit: 0.95, glow: [1.0, 0.66, 0.34] });
+	P.set({ ch: 'glass', c: mulc(C.glass, 0.32), lit: 0.95, glow: [1.0, 0.56, 0.24] });
 	screenPanes(P, lay, arch, zs, r);
 	P.restore();
 	void scrOutline;
@@ -801,6 +802,69 @@ function buildBarossStatue(P, ctx, x, z) {
 	P.restore();
 	P.restore();
 	ctx.addSolidBox(x, z, 7.4, 7.4, yaw);
+}
+
+/**
+ * The 2014 planted terraces of Baross tér (VÁR-KERT): the OSM grass beds on the square become
+ * raised beds with a granite retaining kerb and coping, lawn, low shrub clumps, and at the
+ * Rákóczi út end a row of narrow ornamental pear trees (Pyrus calleryana 'Chanticleer').
+ * Only beds inside the mapped underpass outline (the square itself) are taken.
+ * TODO(landmarks-a): seasonal pear colours (white in April, red-orange in late October) from frame.dayIndex.
+ */
+function buildTerraces(P, ctx, underpass) {
+	if (!underpass) return;
+	// The mapped underpass outline is a thin concave strip, so test against its bounding box.
+	const sq = bounds([underpass.outer]);
+	const beds = (ctx.data.areas || []).filter((a) => a.kind === 'grass' && a.outer && a.outer.length >= 3 && (() => {
+		const b = bounds([a.outer]);
+		const cx = (b.x0 + b.x1) / 2, cz = (b.z0 + b.z1) / 2;
+		return cx > sq.x0 && cx < sq.x1 && cz > sq.z0 - 15 && cz < sq.z1 && b.x1 - b.x0 < 120;
+	})());
+	const r = rng(2014);
+	const lawn = rgb('#6e8f4a'), shrub = rgb('#4f6b3a'), shrub2 = rgb('#5d7a3f');
+	let shrubs = 0;
+	for (const a of beds) {
+		const ring = orientRing(a.outer);
+		const H = 0.48;
+		// Granite kerb: vertical face, a chamfered coping overhanging 6 cm, then the soil level.
+		P.set({ c: C.granite, pat: PAT.ashlar, ps: 0.5, grime: 0.35, rough: 0.75, metal: 0, flood: 0, ch: 'solid' });
+		P.ringBand(ring, [[0, -0.15], [0, H - 0.08], [0.06, H - 0.05], [0.06, H], [-0.3, H], [-0.3, H - 0.06]], 0);
+		P.set({ c: lawn, pat: 0, grime: 0.05, rough: 1 });
+		P.flat(offsetRing(ring, -0.3), H - 0.06);
+		ctx.addSolidRing(ring);
+		// Shrub clumps (low ellipsoids) on a jittered grid inside the bed.
+		const b = bounds([ring]);
+		const inner = offsetRing(ring, -1.0);
+		for (let x = b.x0 + 1.5; x < b.x1 - 1; x += 3.2) for (let z = b.z0 + 1.5; z < b.z1 - 1; z += 3.2) {
+			if (shrubs >= 140) break;
+			const px = x + (r() - 0.5) * 2.2, pz = z + (r() - 0.5) * 2.2;
+			if (!inside(inner, px, pz) || r() < 0.45) continue;
+			const s = 0.6 + r() * 0.6;
+			P.set({ c: mixc(shrub, shrub2, r()), grime: 0, rough: 0.95 });
+			P.blob([px, H - 0.1 + s * 0.35, pz], s * (1 + r() * 0.5), s * 0.55, s * (1 + r() * 0.5), 6, 3);
+			shrubs++;
+		}
+	}
+	// Pear-tree row along the beds at the Rákóczi út end (west of the statue).
+	const west = beds.filter((a) => bounds([a.outer]).x1 < 75);
+	for (const a of west) {
+		const ring = orientRing(a.outer);
+		const e = ringEdges(ring).sort((p, q) => q.len - p.len)[0];
+		if (!e || e.len < 6) continue;
+		const n = Math.floor((e.len - 2) / 7) + 1;
+		for (let i = 0; i < n; i++) {
+			const t = (1 + i * 7 + (e.len - 2 - (n - 1) * 7) / 2) / e.len;
+			const x = e.a[0] + (e.b[0] - e.a[0]) * t - e.nx * 1.4, z = e.a[1] + (e.b[1] - e.a[1]) * t - e.nz * 1.4;
+			if (!inside(ring, x, z)) continue;
+			P.set({ c: rgb('#4a3f35'), grime: 0.2, rough: 0.95, pat: 0 });
+			P.rod([x, 0.4, z], [x, 2.6, z], 0.13, 0.09, 6);
+			P.set({ c: mixc(rgb('#56703a'), rgb('#7a6a34'), r() * 0.5), grime: 0, rough: 0.95 });
+			// Narrow upright oval crown, ~4 m wide and ~8.5 m tall in all.
+			P.blob([x, 5.4, z], 1.9, 3.2, 1.9, 7, 5);
+			P.blob([x + 0.4, 6.6, z - 0.3], 1.3, 1.8, 1.3, 6, 4);
+			ctx.addPost(x, z, 0.2);
+		}
+	}
 }
 
 /** A small steel-and-glass shelter on an OSM outline (mapped as a 16 m block). */
