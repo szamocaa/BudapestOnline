@@ -7,7 +7,7 @@ import { fetchOverpass, normalise, loadCached, saveCached, cityStats, DATA_VERSI
 import { makeFallbackCity } from './fallback.js';
 import { buildCity } from './city/index.js';
 import { Sky } from './sky.js';
-import { createPipeline } from './render/pipeline.js';
+import { createPipeline, detectQuality } from './render/pipeline.js';
 import { createHud, fmtFt } from './ui/hud.js';
 import { Traffic } from './traffic/traffic.js';
 import { AudioSystem } from './audio/audio.js';
@@ -26,6 +26,7 @@ import { Metro, STATIONS } from './metro.js';
 import { buildEntrances } from './metro/entrances.js';
 
 applyUrlOverrides(CONFIG);
+if (!new URLSearchParams(location.search).has('quality')) CONFIG.quality = detectQuality(); // render area: per-device default
 const $ = (id) => document.getElementById(id);
 const REFS = ['99', '23', '24', '28A', 'M2'];
 const PLACES = { blaha: [47.4969, 19.0707], keleti: [47.4998, 19.0826], clinics: [47.4828, 19.0792], spawn: [47.4958, 19.0722] };
