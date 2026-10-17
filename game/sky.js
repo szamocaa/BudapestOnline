@@ -266,7 +266,7 @@ export class Sky {
 		if (st > 1e-5) skyTint.multiplyScalar(3 / st); else skyTint.setRGB(1, 1, 1);
 		this.hemi.color.copy(cityAmb).lerp(skyTint.lerp(_white, 0.5), day);
 		this.hemi.groundColor.setRGB(0.42, 0.36, 0.3).lerp(_gnd, night);
-		this.hemi.intensity = 0.1 + 0.14 * day * (1 - 0.5 * coverage) + 0.2 * night;
+		this.hemi.intensity = 0.1 + 0.14 * day * (1 - 0.5 * coverage) + 0.27 * night;
 
 		// --- haze (aerial perspective): the horizon sky colour, glowing towards the sun
 		const fog = this.scene.fog;

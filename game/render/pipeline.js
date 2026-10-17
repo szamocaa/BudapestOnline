@@ -224,7 +224,8 @@ export function createPipeline(canvas, { quality = 'high' } = {}) {
 
 	function adapt(frame) {
 		const dt = frame ? Math.min(0.1, frame.dt || 0) : 0.016;
-		let target = frame && frame.mode === 'metro' ? 2.1 : frame && frame.sky && frame.sky.exposure ? frame.sky.exposure : 1.5;
+		// metro: the station is lit for ~1.0 (its lights were tuned for the old fixed exposure)
+		let target = frame && frame.mode === 'metro' ? 1.05 : frame && frame.sky && frame.sky.exposure ? frame.sky.exposure : 1.5;
 		// at night the eye opens up in a dark side street and closes a little under a street lamp
 		const night = frame && frame.mode !== 'metro' && frame.sky ? frame.sky.night || 0 : 0;
 		if (night > 0.02 && frame.world && frame.world.lightAt && frame.player) {
