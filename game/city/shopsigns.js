@@ -46,19 +46,35 @@ export function buildShopSigns(ctx) {
 		return mesh;
 	};
 
+	// Shops that buildings.js put behind a ground-floor wall: hang the sign on that wall's fascia
+	// band (between the shop window head and the first floor), just proud of the plaster.
+	// TODO(buildings): centre on the exact shop bay chosen in facadesGeom.groundPlan.
+	const fronts = ctx.shopFronts || new Map();
+	const place = (p, width, height, mat, y) => {
+		const f = fronts.get(p);
+		if (!f) return placeOnWall(p.x, p.z, width, height, mat, y ?? 3.3);
+		const h = Math.min(height, Math.max(0.45, (f.top - f.y) * 2 - 0.05));
+		const mesh = new THREE.Mesh(signGeo, mat);
+		mesh.scale.set(width, h, 1);
+		mesh.position.set(f.x + f.nx * 0.09, y != null ? Math.max(y, f.y) : f.y, f.z + f.nz * 0.09);
+		mesh.rotation.y = Math.atan2(f.nx, f.nz);
+		signs.add(mesh);
+		return mesh;
+	};
+
 	const vapeShops = [];
 	for (const p of ctx.data.pois) {
 		if (p.kind === 'vape') {
 			vapeShops.push(p);
-			placeOnWall(p.x, p.z, 3.4, 0.85, signMat(p.name ? p.name.toUpperCase() : 'VAPE SHOP', { bg: '#0b0b12', fg: '#39ff88', border: '#39ff88', glow: 1.6 }));
+			place(p, 3.4, 0.85, signMat(p.name ? p.name.toUpperCase() : 'VAPE SHOP', { bg: '#0b0b12', fg: '#39ff88', border: '#39ff88', glow: 1.6 }));
 		} else if (p.kind === 'tobacco') {
-			placeOnWall(p.x, p.z, 3.0, 0.8, signMat('NEMZETI DOHÁNYBOLT', { bg: '#5b3a24', fg: '#ffffff', font: 'bold 52px Arial, sans-serif', glow: 0.8 }));
+			place(p, 3.0, 0.8, signMat('NEMZETI DOHÁNYBOLT', { bg: '#5b3a24', fg: '#ffffff', font: 'bold 52px Arial, sans-serif', glow: 0.8 }));
 		} else if (p.kind === 'pharmacy') {
-			placeOnWall(p.x, p.z, 0.9, 0.9, signMat('✚', { bg: '#0e8a3a', fg: '#ffffff', w: 128, h: 128, font: 'bold 110px Arial', glow: 1.4 }), 4.2);
+			place(p, 0.9, 0.9, signMat('✚', { bg: '#0e8a3a', fg: '#ffffff', w: 128, h: 128, font: 'bold 110px Arial', glow: 1.4 }), 4.2);
 		} else if (p.kind === 'grocery' || p.kind === 'kiosk') {
-			placeOnWall(p.x, p.z, 2.8, 0.7, signMat(p.name || (p.kind === 'kiosk' ? 'TRAFIK' : 'ABC'), { bg: '#1f4e79', fg: '#ffffff', glow: 0.7 }));
+			place(p, 2.8, 0.7, signMat(p.name || (p.kind === 'kiosk' ? 'TRAFIK' : 'ABC'), { bg: '#1f4e79', fg: '#ffffff', glow: 0.7 }));
 		} else if ((p.kind === 'bar' || p.kind === 'food' || p.kind === 'cafe') && p.name) {
-			placeOnWall(p.x, p.z, 2.8, 0.7, signMat(p.name, { bg: '#2b1d14', fg: '#ffd08a', glow: 0.9 }));
+			place(p, 2.8, 0.7, signMat(p.name, { bg: '#2b1d14', fg: '#ffd08a', glow: 0.9 }));
 		}
 	}
 	return { vapeShops, placeOnWall, signMat };
