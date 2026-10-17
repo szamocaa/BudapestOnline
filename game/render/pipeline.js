@@ -79,7 +79,8 @@ export function whiteBalance(amount = 0.7) {
 const FS_VERT = /* glsl */ `varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`;
 
 const FINAL_FRAG = /* glsl */ `
-uniform sampler2D tColor, tBloom, tAO;
+uniform sampler2D tColor, tBloom, tAO, tDepth;
+uniform float cameraNear, cameraFar;
 uniform float useAO, aoStrength, bloomStrength, exposure, vignette, grain, time, saturation, contrast, debugAO;
 uniform vec3 shadowTint, highlightTint, whiteBalance;
 uniform vec2 resolution;
@@ -89,7 +90,12 @@ float hash(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx
 void main() {
 	vec3 c = texture2D(tColor, vUv).rgb;
 	float ao = 1.0;
-	if (useAO > 0.5) ao = mix(1.0, texture2D(tAO, vUv).r, aoStrength);
+	if (useAO > 0.5) {
+		// contact shadows where the eye is; fade out with distance (depth-reconstructed normals get noisy)
+		float dz = texture2D(tDepth, vUv).x;
+		float dist = cameraNear * cameraFar / max(cameraFar - dz * (cameraFar - cameraNear), 1e-6);
+		ao = mix(1.0, texture2D(tAO, vUv).r, aoStrength * (1.0 - smoothstep(35.0, 110.0, dist)));
+	}
 	if (debugAO > 0.5) { gl_FragColor = vec4(vec3(ao), 1.0); return; }
 	c = (c * ao * exposure + texture2D(tBloom, vUv).rgb * bloomStrength) * whiteBalance;
 	// split toning in scene light: cool shadows, warm highlights (amount set per time of day)
@@ -139,7 +145,7 @@ export function createPipeline(canvas, { quality = 'high' } = {}) {
 	const finalMat = new THREE.ShaderMaterial({
 		defines: { TM: tm },
 		uniforms: {
-			tColor: { value: null }, tBloom: { value: null }, tAO: { value: null },
+			tColor: { value: null }, tBloom: { value: null }, tAO: { value: null }, tDepth: { value: null }, cameraNear: { value: 0.1 }, cameraFar: { value: 3000 },
 			useAO: { value: 0 }, aoStrength: { value: 0.85 }, bloomStrength: { value: 0.05 }, exposure: { value: 1 },
 			vignette: { value: 0.22 }, grain: { value: 0.012 }, time: { value: 0 }, saturation: { value: 1.06 }, contrast: { value: 0.14 },
 			debugAO: { value: 0 },
@@ -190,7 +196,7 @@ export function createPipeline(canvas, { quality = 'high' } = {}) {
 		const [w, h] = bufferSize();
 		sceneRT = new THREE.WebGLRenderTarget(w, h, { type: THREE.HalfFloatType, samples: t.samples, depthBuffer: true, stencilBuffer: false });
 		sceneRT.depthTexture = new THREE.DepthTexture(w, h);
-		sceneRT.depthTexture.type = THREE.UnsignedIntType;
+		sceneRT.depthTexture.type = THREE.FloatType;
 		bloom = new Bloom(6);
 		bloom.setSize(w, h);
 		finalMat.uniforms.resolution.value.set(w, h);
@@ -211,7 +217,8 @@ export function createPipeline(canvas, { quality = 'high' } = {}) {
 		u.highlightTint.value.set(1 + 0.025 + 0.04 * golden + 0.03 * night, 1 + 0.005 * golden, 1 - 0.03 - 0.06 * golden - 0.05 * night);
 		u.grain.value = 0.010 + 0.012 * night;
 		u.vignette.value = 0.2 + 0.08 * night;
-		u.saturation.value = 1.04 + 0.04 * golden - 0.06 * night;
+		u.saturation.value = 1.1 + 0.05 * golden - 0.08 * night;
+		u.contrast.value = 0.2 - 0.04 * night;
 		u.bloomStrength.value = 0.035 + 0.035 * night;
 	}
 
@@ -247,7 +254,7 @@ export function createPipeline(canvas, { quality = 'high' } = {}) {
 		renderer,
 		get quality() { return state.quality; },
 		get exposure() { return state.exposure; },
-		debug: null,
+		debug: url.get('renderDebug'), // 'ao': show the ambient occlusion buffer
 		render(scene, camera, frame) {
 			adapt(frame);
 			governor(frame);
@@ -274,6 +281,9 @@ export function createPipeline(canvas, { quality = 'high' } = {}) {
 				}
 				gtao.render(renderer, null, sceneRT);
 				u.tAO.value = gtao.pdRenderTarget.texture;
+				u.tDepth.value = sceneRT.depthTexture;
+				u.cameraNear.value = camera.near;
+				u.cameraFar.value = camera.far;
 				u.useAO.value = 1;
 			} else u.useAO.value = 0;
 			grade(frame);

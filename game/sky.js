@@ -232,6 +232,7 @@ export class Sky {
 		const cl = SUN_E * (useSun ? 1 : 0);
 		const ml = 0.05 * mp.illumination * moonUp * night;
 		u.cloudSun.value.setRGB(Tc[0] * cl + ml, Tc[1] * cl + ml, Tc[2] * cl + ml * 1.05);
+		u.cirrusVis.value = 1 - 0.75 * night;
 		u.cloudLightDir.value.copy(el > -4 || mp.elevation < 0 ? sunDir : moonDir);
 		// night sky: deep blue zenith and the orange-grey glow of the city's lights
 		const nk = night;

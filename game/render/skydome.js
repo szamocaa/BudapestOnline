@@ -56,6 +56,7 @@ uniform vec3 groundColor;     // radiance below the horizon (only seen by the en
 uniform vec3 viewOrigin;      // world position the clouds are seen from
 uniform float discs;          // 1 = draw sun and moon discs (0 for the environment map)
 uniform float moonCos;        // cos of the moon's drawn angular radius
+uniform float cirrusVis;      // cirrus opacity (they all but vanish at night)
 varying vec3 vDir;
 ${SKYVIEW_GLSL}
 ${CLOUD_GLSL}
@@ -90,7 +91,7 @@ void main() {
 		float ci = highCloud(pH) * fade;
 		if (ci > 0.001) {
 			vec3 cc = cloudSun * (0.08 + 2.2 * hg(ph, 0.5)) * 0.9 + cloudAmbient * 0.75;
-			col = mix(col, cc, ci * 0.55);
+			col = mix(col, cc, ci * 0.55 * cirrusVis);
 			clear *= 1.0 - ci * 0.35;
 		}
 		// low clouds (cumulus / stratocumulus)
@@ -226,6 +227,7 @@ export class SkyDome {
 			viewOrigin: v3(),
 			discs: { value: 1 },
 			moonCos: { value: Math.cos(0.0075) },
+			cirrusVis: { value: 1 },
 			cloudShape: { value: new THREE.Vector4(0.6, 0, 0, 6) },
 			cloudWind: { value: new THREE.Vector4() },
 			cirrusRot: { value: new THREE.Vector2(1, 0) },
