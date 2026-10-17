@@ -23,43 +23,70 @@ export const RAIL = { WROUGHT: 0, GANG: 1, MODERN: 2, SECESSION: 3 };
 
 // ---------------------------------------------------------------- buffers
 
-/** Opaque facade geometry: position, normal, uv (metres), colour (linear tint), mat (layer, dirt). */
+/** Growable typed array (amortised doubling; .a is the backing array, .n the used length). */
+class Grow {
+	constructor(T, cap) { this.T = T; this.a = new T(cap); this.n = 0; }
+	need(k) {
+		if (this.n + k <= this.a.length) return;
+		let c = this.a.length * 2;
+		while (c < this.n + k) c *= 2;
+		const b = new this.T(c);
+		b.set(this.a);
+		this.a = b;
+	}
+	view() { return this.a.subarray(0, this.n); }
+}
+
+/**
+ * Opaque facade geometry, packed for the GPU: position f32x3, normal i8x3 (normalised), uv f32x2
+ * (metres), tint u8x4 (linear rgb, dirt / 2), layer u8 (texture layer, see LAYER).
+ */
 export class OpaqueBuf {
-	constructor() { this.pos = []; this.nrm = []; this.uv = []; this.col = []; this.mat = []; this.idx = []; this.n = 0; }
+	constructor(cap = 4096) {
+		this.P = new Grow(Float32Array, cap * 3); this.N = new Grow(Int8Array, cap * 3); this.U = new Grow(Float32Array, cap * 2);
+		this.C = new Grow(Uint8Array, cap * 4); this.Lr = new Grow(Uint8Array, cap); this.I = new Grow(Uint32Array, cap * 2);
+		this.n = 0;
+	}
+	get triangles() { return this.I.n / 3; }
+	_v(x, y, z, nx, ny, nz, u, v, c, layer, d) {
+		const P = this.P, N = this.N, U = this.U, C = this.C, L = this.Lr;
+		P.a[P.n++] = x; P.a[P.n++] = y; P.a[P.n++] = z;
+		N.a[N.n++] = Math.round(nx * 127); N.a[N.n++] = Math.round(ny * 127); N.a[N.n++] = Math.round(nz * 127);
+		U.a[U.n++] = u; U.a[U.n++] = v;
+		const cl = (q) => (q <= 0 ? 0 : q >= 1 ? 255 : Math.round(q * 255));
+		C.a[C.n++] = cl(c[0]); C.a[C.n++] = cl(c[1]); C.a[C.n++] = cl(c[2]); C.a[C.n++] = cl(d * 0.5);
+		L.a[L.n++] = layer;
+		return this.n++;
+	}
+	_reserve(v, i) { this.P.need(v * 3); this.N.need(v * 3); this.U.need(v * 2); this.C.need(v * 4); this.Lr.need(v); this.I.need(i); }
 	/** Quad from P (12 numbers: 4 corners), outward normal n; UV 8 numbers; D 4 dirt values. */
 	quad(P, nx, ny, nz, UV, c, layer, d0, d1, d2, d3) {
 		const gx = (P[4] - P[1]) * (P[8] - P[2]) - (P[5] - P[2]) * (P[7] - P[1]);
 		const gy = (P[5] - P[2]) * (P[6] - P[0]) - (P[3] - P[0]) * (P[8] - P[2]);
 		const gz = (P[3] - P[0]) * (P[7] - P[1]) - (P[4] - P[1]) * (P[6] - P[0]);
+		this._reserve(4, 6);
 		const b = this.n;
-		const D = [d0, d1, d2, d3];
-		for (let k = 0; k < 4; k++) {
-			this.pos.push(P[k * 3], P[k * 3 + 1], P[k * 3 + 2]);
-			this.nrm.push(nx, ny, nz);
-			this.uv.push(UV[k * 2], UV[k * 2 + 1]);
-			this.col.push(c[0], c[1], c[2]);
-			this.mat.push(layer, D[k]);
-		}
-		this.n += 4;
-		if (gx * nx + gy * ny + gz * nz >= 0) this.idx.push(b, b + 1, b + 2, b, b + 2, b + 3);
-		else this.idx.push(b, b + 2, b + 1, b, b + 3, b + 2);
+		this._v(P[0], P[1], P[2], nx, ny, nz, UV[0], UV[1], c, layer, d0);
+		this._v(P[3], P[4], P[5], nx, ny, nz, UV[2], UV[3], c, layer, d1);
+		this._v(P[6], P[7], P[8], nx, ny, nz, UV[4], UV[5], c, layer, d2);
+		this._v(P[9], P[10], P[11], nx, ny, nz, UV[6], UV[7], c, layer, d3);
+		const I = this.I;
+		if (gx * nx + gy * ny + gz * nz >= 0) { I.a[I.n++] = b; I.a[I.n++] = b + 1; I.a[I.n++] = b + 2; I.a[I.n++] = b; I.a[I.n++] = b + 2; I.a[I.n++] = b + 3; }
+		else { I.a[I.n++] = b; I.a[I.n++] = b + 2; I.a[I.n++] = b + 1; I.a[I.n++] = b; I.a[I.n++] = b + 3; I.a[I.n++] = b + 2; }
 	}
 	/** Triangle from P (9 numbers). */
 	tri(P, nx, ny, nz, UV, c, layer, d) {
 		const gx = (P[4] - P[1]) * (P[8] - P[2]) - (P[5] - P[2]) * (P[7] - P[1]);
 		const gy = (P[5] - P[2]) * (P[6] - P[0]) - (P[3] - P[0]) * (P[8] - P[2]);
 		const gz = (P[3] - P[0]) * (P[7] - P[1]) - (P[4] - P[1]) * (P[6] - P[0]);
+		this._reserve(3, 3);
 		const b = this.n;
-		for (let k = 0; k < 3; k++) {
-			this.pos.push(P[k * 3], P[k * 3 + 1], P[k * 3 + 2]);
-			this.nrm.push(nx, ny, nz);
-			this.uv.push(UV[k * 2], UV[k * 2 + 1]);
-			this.col.push(c[0], c[1], c[2]);
-			this.mat.push(layer, d);
-		}
-		this.n += 3;
-		if (gx * nx + gy * ny + gz * nz >= 0) this.idx.push(b, b + 1, b + 2);
-		else this.idx.push(b, b + 2, b + 1);
+		this._v(P[0], P[1], P[2], nx, ny, nz, UV[0], UV[1], c, layer, d);
+		this._v(P[3], P[4], P[5], nx, ny, nz, UV[2], UV[3], c, layer, d);
+		this._v(P[6], P[7], P[8], nx, ny, nz, UV[4], UV[5], c, layer, d);
+		const I = this.I;
+		if (gx * nx + gy * ny + gz * nz >= 0) { I.a[I.n++] = b; I.a[I.n++] = b + 1; I.a[I.n++] = b + 2; }
+		else { I.a[I.n++] = b; I.a[I.n++] = b + 2; I.a[I.n++] = b + 1; }
 	}
 }
 
@@ -558,10 +585,6 @@ function spandrel(B, F, o, col, lay, dirt) {
 		UVS[0] = F.uo + tc; UVS[1] = o.y1; UVS[2] = F.uo + t0; UVS[3] = y0; UVS[4] = F.uo + t1; UVS[5] = y1;
 		B.tri(P, F.nx, 0, F.nz, UVS, col, lay, dirt);
 	}
-	// The corner triangle between the two fans at the crown.
-	P[0] = F.X(o.t0, 0); P[1] = o.y1; P[2] = F.Z(o.t0, 0);
-	P[3] = F.X(c, 0); P[4] = o.y1; P[5] = F.Z(c, 0);
-	P[6] = F.X(o.t1, 0); P[7] = o.y1; P[8] = F.Z(o.t1, 0);
 }
 
 /** Reveals (inside faces of an opening) from depth dFront back to -depth. */

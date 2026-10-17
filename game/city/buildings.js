@@ -1,82 +1,220 @@
-// The city's ordinary buildings (Józsefváros tenements) from OSM footprints.
+// The city's ordinary buildings (the Józsefváros tenements) from OSM footprints.
+//
+//   facadesPlan.js  storeys, heights, styles, party walls / firewalls / courtyards, shops per wall;
+//   facadesGeom.js  the geometry: detailed 3D facades near the player, a light shell for the rest;
+//   facadesRoof.js  roofs for any footprint (hipped towards the street, gables on party walls...);
+//   facadesTex.js   the procedural texture array and the facade / glazing / far / railing shaders.
+//
+// Levels of detail: the whole district is drawn as a far shell (one merged mesh per 500 m region,
+// windows drawn by the shader); within DETAIL_R of the camera every 100 m chunk gets its detailed
+// facades (built lazily, a few per frame) and the shader hides that chunk's shell. The shell also
+// casts all building shadows, so detailed chunks cost no extra shadow-pass draw calls.
 import * as THREE from '../vendor/three.module.min.js';
-import { MeshBuffer, appendWalls, appendRoof, FLOOR_H, BAY_W, GROUND_H, SHOP_BAY_W } from '../meshing.js';
-import { facadeTextures, shopfrontTexture, roofTexture } from '../textures.js';
-import { rng, hashString } from '../geo.js';
-import { geometryFrom, hexToRgb } from './common.js';
+import { planBuildings, chunkIndex, occupancyAt, CHUNK, GRID_X0, GRID_Z0, GRID_W, GRID_H } from './facadesPlan.js';
+import { OpaqueBuf, GlassBuf, RailBuf, FarBuf, buildDetail, buildFar } from './facadesGeom.js';
+import { buildingUniforms, facadeMaterial, glassMaterial, farMaterial, railMaterial } from './facadesTex.js';
 
-// Plaster colours typical of Józsefváros' 19th-century blocks: weathered ochre, cream, grey, brick.
-const PLASTERS = ['#d8c7a0', '#cdb27c', '#e0d6c2', '#b9b2a4', '#c9a27a', '#a99c88', '#d4bfa8', '#bfae8f'];
-const ROOFS = ['#4a4744', '#5a534c', '#6b4a3a', '#3f4146', '#7a5a46'];
-const CHUNK = 250;
+const DETAIL_R = { high: 250, medium: 170, low: 95 };
+const CORE_R = 130; // chunks this close are built at once (teleports, start-up)
+const REGION = 5; // far-shell meshes cover REGION x REGION chunks
+const FRAME_BUDGET_MS = 6;
 
-function nearestPalette(hex) {
-	const c = new THREE.Color(hex);
-	let best = 0, bestD = Infinity;
-	PLASTERS.forEach((p, i) => {
-		const q = new THREE.Color(p);
-		const d = (q.r - c.r) ** 2 + (q.g - c.g) ** 2 + (q.b - c.b) ** 2;
-		if (d < bestD) { bestD = d; best = i; }
-	});
-	return best;
+const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+
+function farGeometry(fb) {
+	const g = new THREE.BufferGeometry();
+	g.setAttribute('position', new THREE.Float32BufferAttribute(fb.pos, 3));
+	g.setAttribute('normal', new THREE.Float32BufferAttribute(fb.nrm, 3));
+	g.setAttribute('color', new THREE.Float32BufferAttribute(fb.col, 3));
+	g.setAttribute('f1', new THREE.Float32BufferAttribute(fb.f1, 4));
+	g.setAttribute('f2', new THREE.Float32BufferAttribute(fb.f2, 4));
+	g.setAttribute('chunk', new THREE.Float32BufferAttribute(fb.chunk, 1));
+	g.setIndex(new THREE.BufferAttribute(new Uint32Array(fb.idx), 1));
+	g.computeBoundingSphere();
+	return g;
 }
 
-/** Builds every OSM building not replaced by a landmark. Returns { meshes }. */
+function opaqueGeometry(O) {
+	const g = new THREE.BufferGeometry();
+	g.setAttribute('position', new THREE.BufferAttribute(O.P.view().slice(), 3));
+	g.setAttribute('normal', new THREE.BufferAttribute(O.N.view().slice(), 3, true));
+	g.setAttribute('uv', new THREE.BufferAttribute(O.U.view().slice(), 2));
+	g.setAttribute('tint', new THREE.BufferAttribute(O.C.view().slice(), 4, true));
+	g.setAttribute('layer', new THREE.BufferAttribute(O.Lr.view().slice(), 1));
+	g.setIndex(new THREE.BufferAttribute(O.I.view().slice(), 1));
+	g.computeBoundingSphere();
+	return g;
+}
+
+function glassGeometry(G) {
+	const g = new THREE.BufferGeometry();
+	g.setAttribute('position', new THREE.Float32BufferAttribute(G.pos, 3));
+	g.setAttribute('normal', new THREE.Float32BufferAttribute(G.nrm, 3));
+	g.setAttribute('wtan', new THREE.Float32BufferAttribute(G.tan, 2));
+	g.setAttribute('uv', new THREE.Float32BufferAttribute(G.uv, 2));
+	g.setAttribute('win', new THREE.Float32BufferAttribute(G.win, 4));
+	g.setAttribute('win2', new THREE.Float32BufferAttribute(G.win2, 4));
+	g.setIndex(new THREE.BufferAttribute(new Uint32Array(G.idx), 1));
+	g.computeBoundingSphere();
+	return g;
+}
+
+function railGeometry(R) {
+	const g = new THREE.BufferGeometry();
+	g.setAttribute('position', new THREE.Float32BufferAttribute(R.pos, 3));
+	g.setAttribute('normal', new THREE.Float32BufferAttribute(R.nrm, 3));
+	g.setAttribute('uv', new THREE.Float32BufferAttribute(R.uv, 2));
+	g.setIndex(new THREE.BufferAttribute(new Uint32Array(R.idx), 1));
+	g.computeBoundingSphere();
+	return g;
+}
+
+const mixC = (out, a, b, t) => out.setRGB(a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t);
+const SKY = {
+	top: { day: [0.3, 0.46, 0.78], gold: [0.42, 0.4, 0.55], night: [0.012, 0.016, 0.03] },
+	hor: { day: [0.9, 0.94, 1.0], gold: [1.25, 0.78, 0.48], night: [0.07, 0.055, 0.05] },
+};
+
+/** Builds every OSM building not replaced by a landmark. Returns { meshes, plan, stats() }. */
 export function buildBuildings(ctx) {
 	const { root, data } = ctx;
-	const facades = PLASTERS.map((p, i) => facadeTextures(100 + i, p));
-	const shop = shopfrontTexture(3);
-	const roofTex = roofTexture();
-	const facadeMats = facades.map((f) => ctx.night(new THREE.MeshStandardMaterial({ map: f.map, emissiveMap: f.emissive, emissive: 0xffffff, emissiveIntensity: 0, roughness: 0.88 }), 1.15));
-	const shopMat = new THREE.MeshStandardMaterial({ map: shop.map, roughness: 0.85 });
-	const roofMat = new THREE.MeshStandardMaterial({ map: roofTex, vertexColors: true, roughness: 0.8, metalness: 0.15 });
+	const quality = ctx.quality || 'high';
+	const plan = planBuildings(data, { suppressed: ctx.suppressed });
+	const U = buildingUniforms();
+	const mask = new Uint8Array(GRID_W * GRID_H);
+	const maskTex = new THREE.DataTexture(mask, GRID_W, GRID_H, THREE.RedFormat, THREE.UnsignedByteType);
+	maskTex.needsUpdate = true;
+	U.uDetail.value = maskTex;
+	const mats = { facade: facadeMaterial(U), glass: glassMaterial(U), far: farMaterial(U), rail: railMaterial() };
 
+	// Chunks of buildings (by footprint centre), collision walls and the shop fronts for the signs.
 	const chunks = new Map();
-	const chunkFor = (x, z) => {
-		const k = Math.floor(x / CHUNK) + ',' + Math.floor(z / CHUNK);
-		if (!chunks.has(k)) chunks.set(k, { facade: PLASTERS.map(() => new MeshBuffer()), shop: new MeshBuffer(), roof: new MeshBuffer() });
-		return chunks.get(k);
-	};
-
-	for (const b of data.buildings) {
-		if (ctx.suppressed.has(b.id)) continue;
-		if (b.hasParts) continue; // its building:part pieces are drawn instead
-		const rings = [b.outer, ...(b.holes || [])];
-		const r = rng(hashString('b' + b.id));
-		const variant = b.colour ? nearestPalette(b.colour) : Math.floor(r() * PLASTERS.length);
-		const ch = chunkFor(b.cx, b.cz);
-		const h = Math.max(3, b.h);
-		const base = b.minH || 0;
-		const offU = Math.floor(r() * 8), offV = Math.floor(r() * 8);
-		const hasShops = h > 7 && base < 0.5;
-		const gTop = hasShops ? GROUND_H : base;
-		// Ground floor: shopfronts, gates and shutters.
-		if (hasShops) {
-			const so = Math.floor(r() * 8);
-			appendWalls(ch.shop, [b.outer], 0, GROUND_H, (a, y) => [(a / SHOP_BAY_W + so) / 8, y / GROUND_H]);
-			if (b.holes && b.holes.length) appendWalls(ch.facade[variant], b.holes, 0, GROUND_H, (a, y) => [(a / BAY_W + offU) / 8, (y / FLOOR_H + offV) / 8]);
+	const shopFronts = new Map();
+	for (const info of plan.infos) {
+		const [ix, iz] = chunkIndex(info.b.cx, info.b.cz);
+		const k = ix + iz * GRID_W;
+		let ch = chunks.get(k);
+		if (!ch) chunks.set(k, (ch = { k, ix, iz, cx: GRID_X0 + (ix + 0.5) * CHUNK, cz: GRID_Z0 + (iz + 0.5) * CHUNK, infos: [], group: null }));
+		ch.infos.push(info);
+		// Solid walls only where they reach the street (parts in the air do not block walking).
+		if (info.base < 2) for (const ring of info.rings) ctx.addSolidRing(ring, info.b);
+		for (const s of info.segs) for (const { poi, t } of s.pois) {
+			// Fascia band between the shop window head and the first-floor string course.
+			shopFronts.set(poi, { x: s.ax + s.ux * t, z: s.az + s.uz * t, nx: s.nx, nz: s.nz, y: info.floorY[1] - 0.62, top: info.floorY[1] - 0.15 });
 		}
-		// Upper floors: one window bay every 3.2 m, one floor every 3.4 m.
-		appendWalls(ch.facade[variant], rings, gTop, h, (a, y) => [(a / BAY_W + offU) / 8, ((y - gTop) / FLOOR_H + offV) / 8]);
-		const roofColour = hexToRgb(b.roof || ROOFS[Math.floor(r() * ROOFS.length)]);
-		appendRoof(ch.roof, rings, h, roofColour, 0.25);
-		// Solid walls (only where they reach the street: parts in the air do not block walking).
-		if (base < 2) for (const ring of rings) ctx.addSolidRing(ring, b);
+	}
+	ctx.shopFronts = shopFronts; // read by shopsigns.js
+
+	// Far shell: every building, merged per region.
+	const regions = new Map();
+	for (const ch of chunks.values()) {
+		const rk = Math.floor(ch.ix / REGION) + ',' + Math.floor(ch.iz / REGION);
+		if (!regions.has(rk)) regions.set(rk, new FarBuf());
+		const fb = regions.get(rk);
+		for (const info of ch.infos) {
+			try { buildFar(info, fb, ch.k); } catch { /* a broken footprint: skip it */ }
+		}
+	}
+	const meshes = [];
+	for (const fb of regions.values()) {
+		if (!fb.idx.length) continue;
+		const m = new THREE.Mesh(farGeometry(fb), mats.far);
+		m.castShadow = true;
+		m.receiveShadow = true;
+		m.name = 'buildings-far';
+		root.add(m);
+		meshes.push(m);
 	}
 
-	const meshes = [];
-	for (const ch of chunks.values()) {
-		const add = (buf, mat, withColour) => {
-			if (!buf.idx.length) return;
-			const m = new THREE.Mesh(geometryFrom(buf, withColour), mat);
-			m.castShadow = true;
+	// Detail chunks, built on demand.
+	const detailRoot = new THREE.Group();
+	detailRoot.name = 'buildings-detail';
+	root.add(detailRoot);
+	const stats = { built: 0, triangles: 0, buildMs: 0 };
+	function buildChunk(ch) {
+		const t0 = now();
+		const out = { opaque: new OpaqueBuf(8192), glass: new GlassBuf(), rail: new RailBuf(), signs: [] };
+		for (const info of ch.infos) {
+			try { buildDetail(info, out); } catch { /* keep the shell for this one */ }
+		}
+		const group = new THREE.Group();
+		const add = (geo, mat, shadow) => {
+			if (!geo.index || !geo.index.count) { geo.dispose(); return; }
+			const m = new THREE.Mesh(geo, mat);
+			m.castShadow = shadow;
 			m.receiveShadow = true;
-			root.add(m);
-			meshes.push(m);
+			group.add(m);
 		};
-		ch.facade.forEach((buf, i) => add(buf, facadeMats[i], false));
-		add(ch.shop, shopMat, false);
-		add(ch.roof, roofMat, true);
+		add(opaqueGeometry(out.opaque), mats.facade, false);
+		add(glassGeometry(out.glass), mats.glass, false);
+		add(railGeometry(out.rail), mats.rail, false);
+		ch.tris = out.opaque.triangles + (out.glass.idx.length + out.rail.idx.length) / 3;
+		ch.group = group;
+		detailRoot.add(group);
+		mask[ch.k] = 255;
+		maskTex.needsUpdate = true;
+		stats.built++;
+		stats.buildMs += now() - t0;
 	}
-	return { meshes };
+	function dropChunk(ch) {
+		detailRoot.remove(ch.group);
+		for (const m of ch.group.children) m.geometry.dispose();
+		ch.group = null;
+		mask[ch.k] = 0;
+		maskTex.needsUpdate = true;
+	}
+
+	const R = DETAIL_R[quality] || DETAIL_R.high;
+	const list = [...chunks.values()];
+	function stream(x, z) {
+		const want = [];
+		for (const ch of list) {
+			// Distance from the camera to the chunk square.
+			const dx = Math.max(0, Math.abs(x - ch.cx) - CHUNK / 2), dz = Math.max(0, Math.abs(z - ch.cz) - CHUNK / 2);
+			const d = Math.hypot(dx, dz);
+			ch.dist = d;
+			if (ch.group && d > R + 70) dropChunk(ch);
+			else if (!ch.group && d < R) want.push(ch);
+		}
+		if (!want.length) return;
+		want.sort((a, b) => a.dist - b.dist);
+		const t0 = now();
+		for (const ch of want) {
+			if (ch.dist > Math.min(CORE_R, R) && now() - t0 > FRAME_BUDGET_MS) break;
+			buildChunk(ch);
+		}
+	}
+
+	const cTop = new THREE.Color(), cHor = new THREE.Color();
+	ctx.onUpdate((frame) => {
+		const cam = frame.camera;
+		const x = cam ? cam.position.x : frame.player.x, z = cam ? cam.position.z : frame.player.z;
+		stream(x, z);
+		const sky = frame.sky || {};
+		const night = sky.night ?? 0, golden = sky.golden ?? 0, day = sky.day ?? 1 - night;
+		U.uHours.value = frame.hours ?? 12;
+		U.uOcc.value = occupancyAt(frame.hours ?? 12);
+		U.uTime.value += frame.dt || 0;
+		U.uDayLight.value = Math.max(0, Math.min(1, day));
+		mixC(cTop, SKY.top.day, SKY.top.night, night);
+		mixC(cHor, SKY.hor.day, SKY.hor.night, night);
+		if (golden > 0) {
+			cTop.lerp(new THREE.Color(...SKY.top.gold), golden * 0.6);
+			cHor.lerp(new THREE.Color(...SKY.hor.gold), golden * 0.7);
+		}
+		U.uSkyTop.value.copy(cTop);
+		U.uSkyHor.value.copy(cHor);
+		U.uStreet.value.setRGB(0.1 * (1 - night) + 0.03 * night, 0.1 * (1 - night) + 0.025 * night, 0.1 * (1 - night) + 0.02 * night);
+	});
+	ctx.onNight((k) => { U.uNight.value = Math.max(0, Math.min(1, (k - 0.15) / 0.6)); });
+
+	return {
+		meshes,
+		plan,
+		stats: () => {
+			let tris = 0, n = 0;
+			for (const ch of list) if (ch.group) { tris += ch.tris; n++; }
+			return { ...stats, chunks: n, detailTriangles: tris };
+		},
+	};
 }
