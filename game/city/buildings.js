@@ -9,6 +9,16 @@
 // windows drawn by the shader); within DETAIL_R of the camera every 100 m chunk gets its detailed
 // facades (built lazily, a few per frame) and the shader hides that chunk's shell. The shell also
 // casts all building shadows, so detailed chunks cost no extra shadow-pass draw calls.
+//
+// TODO(buildings), in order of value:
+//   * shop signs: draw the facadesGeom sign requests (out.signs, one per shopfront fascia) into a
+//     per-chunk sign atlas instead of one mesh per POI in shopsigns.js (draw calls), and centre them
+//     on the chosen bay; redesign the NEMZETI DOHÁNYBOLT / gyógyszertár / vape signs;
+//   * the "white skeleton" seen at the Blaha end of Népszínház utca (tour shot 02): find the
+//     building whose walls render inside-out or are missing while their trims draw;
+//   * near chunks (< 60 m) could cast their own shadows (cornice/balcony shadow lines);
+//   * plaster palette and dirt tuning against photos; corner chamfers/bays/turrets (info.turret);
+//   * the speckle-prone ray-box room (roomAt) is fine on flats; shops use the parallax shopAt.
 import * as THREE from '../vendor/three.module.min.js';
 import { planBuildings, chunkIndex, occupancyAt, CHUNK, GRID_X0, GRID_Z0, GRID_W, GRID_H } from './facadesPlan.js';
 import { OpaqueBuf, GlassBuf, RailBuf, FarBuf, buildDetail, buildFar } from './facadesGeom.js';
