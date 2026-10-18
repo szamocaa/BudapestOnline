@@ -337,16 +337,97 @@ varying vec2 vPane; flat varying vec4 vWin; flat varying vec4 vWin2; varying vec
 vec3 framePal(float i) {
 	return i < 0.5 ? vec3(0.78, 0.78, 0.76) : i < 1.5 ? vec3(0.16, 0.09, 0.05) : i < 2.5 ? vec3(0.62, 0.56, 0.44) : i < 3.5 ? vec3(0.22, 0.23, 0.24) : i < 4.5 ? vec3(0.07, 0.15, 0.09) : vec3(0.025);
 }
-// Shop interior: parallax layers (shelves on the back wall, floor, a band of ceiling lights).
-// TODO(buildings): the ray-box room below speckles for deep shop rooms in SwiftShader; revisit on GPUs.
-vec4 shopAt(vec2 pp, vec3 Vt, float seed) {
-	vec2 q = pp + Vt.xy / max(Vt.z, 0.25) * vec2(0.22, 0.28);
-	float shelf = smoothstep(0.0, 0.08, abs(fract(q.y * 3.2) - 0.5) - 0.32);
-	vec3 goods = vec3(0.45 + 0.4 * bHash(floor(q * vec2(7.0, 3.2)) + seed), 0.4 + 0.35 * bHash(floor(q * vec2(5.0, 3.2)) + seed + 3.0), 0.35 + 0.4 * bHash(floor(q * vec2(6.0, 3.2)) + seed + 7.0));
-	vec3 c = mix(goods, vec3(0.75, 0.73, 0.7), shelf);
-	c = mix(vec3(0.42, 0.4, 0.37), c, smoothstep(0.0, 0.18, q.y));
-	c = mix(c, vec3(0.9, 0.9, 0.88), smoothstep(0.9, 1.0, q.y));
-	return vec4(c, 0.35 + 0.65 * smoothstep(0.2, 1.0, pp.y));
+// Shop interiors (pane-space ray against a few depth layers, no texture): a counter behind the
+// glass, a free-standing gondola / clothes rail / café tables, the back wall with shelving, a tiled
+// floor and a ceiling with light panels. kind: 0 shelves (grocery, general), 1 boutique, 2 café or
+// bar, 3 pharmacy. Returns (colour, lamp factor).
+vec3 goodsCol(float h, float kind) {
+	if (kind == 3.0) return h < 0.5 ? vec3(0.9, 0.9, 0.88) : h < 0.7 ? vec3(0.2, 0.5, 0.3) : h < 0.85 ? vec3(0.25, 0.4, 0.75) : vec3(0.85, 0.3, 0.25);
+	if (kind == 1.0) return h < 0.3 ? vec3(0.06) : h < 0.45 ? vec3(0.5, 0.5, 0.52) : h < 0.6 ? vec3(0.12, 0.16, 0.3) : h < 0.72 ? vec3(0.78, 0.7, 0.58) : h < 0.85 ? vec3(0.9) : vec3(0.6, 0.12, 0.12);
+	if (kind == 2.0) return h < 0.35 ? vec3(0.45, 0.25, 0.06) : h < 0.6 ? vec3(0.1, 0.3, 0.12) : h < 0.8 ? vec3(0.8, 0.75, 0.6) : vec3(0.5, 0.08, 0.08);
+	return h < 0.16 ? vec3(0.78, 0.1, 0.08) : h < 0.3 ? vec3(0.92, 0.76, 0.18) : h < 0.44 ? vec3(0.12, 0.28, 0.68) : h < 0.56 ? vec3(0.18, 0.52, 0.22) : h < 0.72 ? vec3(0.9, 0.88, 0.82) : h < 0.84 ? vec3(0.95, 0.48, 0.12) : vec3(0.36, 0.2, 0.46);
+}
+vec3 shelving(vec2 h, float seed, float top, vec3 wallC, float kind) {
+	if (h.y > top) return wallC;
+	if (h.y < 0.12) return vec3(0.1);
+	float band = kind == 2.0 ? 0.36 : 0.42;
+	float yy = h.y - 0.12, row = floor(yy / band), fy = yy - row * band;
+	if (abs(fract(h.x / 1.0 + 0.5) - 0.5) < 0.018) return vec3(0.42, 0.43, 0.44);
+	if (fy < 0.025) return vec3(0.72, 0.72, 0.7);
+	float pw = (kind == 2.0 ? 0.07 : 0.08) + 0.13 * bHash(vec2(row + 0.5, seed * 9.0 + 1.0));
+	float cx = floor(h.x / pw);
+	float hh = bHash(vec2(cx + 0.5, row + seed * 31.0));
+	float ph = band * (0.45 + 0.42 * bHash(vec2(cx + 3.1, row + 0.7)));
+	vec3 back = wallC * 0.4;
+	float under = 0.6 + 0.4 * smoothstep(0.0, 0.12, band - fy);
+	if (fy - 0.025 > ph || fract(h.x / pw) > 0.86 || hh < 0.07) return back * under;
+	vec3 c = goodsCol(fract(hh * 7.31), kind) * (0.7 + 0.3 * bHash(vec2(cx * 1.7, row * 3.3)));
+	c *= 0.85 + 0.15 * step(abs(fy - 0.025 - ph * 0.5), ph * 0.2);
+	return c * under;
+}
+vec4 shopAt(vec2 pp, vec2 sz, vec3 Vt, float seed, float mode) {
+	vec2 P = pp * sz;
+	vec2 sl = Vt.xy / max(Vt.z, 0.08);
+	float kind = mode == 9.0 ? 2.0 : mode == 10.0 ? 3.0 : fract(seed * 5.71) < 0.3 ? 1.0 : 0.0;
+	float s3 = fract(seed * 3.3);
+	vec3 wallC = kind == 2.0 ? vec3(0.42, 0.28, 0.18) : kind == 3.0 ? vec3(0.86, 0.88, 0.86) : s3 < 0.5 ? vec3(0.82, 0.8, 0.76) : s3 < 0.8 ? vec3(0.62, 0.68, 0.72) : vec3(0.75, 0.66, 0.55);
+	float ceilY = sz.y + 0.35;
+	float dF = sl.y < -1e-3 ? P.y / -sl.y : 1e3;
+	float dC = sl.y > 1e-3 ? (ceilY - P.y) / sl.y : 1e3;
+	float dE = min(dF, dC);
+	float D = 3.2 + 2.6 * fract(seed * 2.9);
+	vec2 h = P + sl * D;
+	vec3 c;
+	float lamp = 0.55;
+	// Back wall (and the side walls when the ray leaves the room's width first).
+	float halfW = sz.x * 0.5 + 0.8 + fract(seed * 8.1);
+	float dS = abs(sl.x) > 1e-3 ? (halfW - (P.x - sz.x * 0.5) * sign(sl.x)) / abs(sl.x) : 1e3;
+	if (dS < D) { D = dS; h = P + sl * D; c = wallC * 0.7; }
+	else c = kind == 2.0 ? (h.y < 1.05 ? vec3(0.2, 0.12, 0.07) * (0.8 + 0.2 * step(1.0, h.y)) : shelving(h, seed, 2.3, wallC, 2.0)) : shelving(h, seed, kind == 3.0 ? 2.4 : kind == 1.0 ? 1.9 : 2.15, wallC, kind);
+	// Middle layer: gondola shelving, a clothes rail or café tables.
+	float Dm = 1.6 + 0.8 * fract(seed * 4.3);
+	vec2 hm = P + sl * Dm;
+	if (Dm < D && Dm < dE) {
+		if (kind == 0.0 || kind == 3.0) {
+			float cell = floor(hm.x / 2.4);
+			if (bHash(vec2(cell, seed * 5.0)) < 0.55 && hm.y < 1.45 && fract(hm.x / 2.4) > 0.15 && fract(hm.x / 2.4) < 0.85) { D = Dm; c = shelving(hm, seed + 2.0, 1.45, vec3(0.5), kind); }
+		} else if (kind == 1.0) {
+			float gx = fract(hm.x / 0.11), cell = floor(hm.x / 0.11);
+			float has = step(bHash(vec2(cell, seed * 3.0 + 1.0)), 0.72) * step(abs(fract(hm.x / 3.0) - 0.5), 0.36);
+			float len = 0.55 + 0.4 * bHash(vec2(cell + 0.3, seed));
+			if (abs(hm.y - 1.62) < 0.015 && has + step(abs(fract(hm.x / 3.0) - 0.5), 0.36) > 0.5) { D = Dm; c = vec3(0.5); }
+			else if (has > 0.5 && hm.y < 1.6 && hm.y > 1.6 - len && gx > 0.08) { D = Dm; c = goodsCol(bHash(vec2(cell, seed * 7.0)), 1.0) * (0.75 + 0.25 * sin(gx * 3.14159)); }
+		} else {
+			float tx = abs(fract(hm.x / 1.7) - 0.5) * 1.7;
+			if (hm.y < 0.76 && (hm.y > 0.71 ? tx < 0.36 : tx < 0.035)) { D = Dm; c = hm.y > 0.71 ? vec3(0.78, 0.75, 0.7) : vec3(0.05); }
+			else if (hm.y < 0.92 && abs(tx - 0.5) < 0.17 && (hm.y < 0.46 ? abs(tx - 0.5) > 0.14 : hm.y > 0.62)) { D = Dm; c = vec3(0.12, 0.08, 0.06); }
+		}
+	}
+	// Front layer: a counter just behind the glass, on one side.
+	float Dc = 0.8;
+	vec2 hc = P + sl * Dc;
+	bool right = fract(seed * 7.7) > 0.5;
+	if (kind != 1.0 && Dc < dE && hc.y < 0.98 && (right ? hc.x > sz.x * 0.58 : hc.x < sz.x * 0.42)) {
+		D = Dc;
+		c = kind == 2.0 ? vec3(0.24, 0.14, 0.08) : kind == 3.0 ? vec3(0.9, 0.9, 0.88) : vec3(0.55, 0.52, 0.48);
+		c *= hc.y > 0.93 ? 1.25 : 0.8 + 0.2 * step(0.5, fract(hc.x / 0.6));
+	}
+	// Floor and ceiling.
+	if (dE < D) {
+		D = dE;
+		vec2 fp = vec2(P.x + sl.x * dE, dE);
+		if (dF < dC) {
+			float chk = mod(floor(fp.x / 0.4) + floor(fp.y / 0.4), 2.0);
+			c = kind == 2.0 ? vec3(0.3, 0.19, 0.11) * (0.85 + 0.15 * bHash(floor(fp * vec2(1.0, 6.0)))) : mix(vec3(0.62, 0.6, 0.56), vec3(0.48, 0.46, 0.43), chk);
+			c *= 0.8 + 0.2 * smoothstep(0.0, 0.03, min(fract(fp.x / 0.4), fract(fp.y / 0.4)));
+		} else {
+			c = vec3(0.78, 0.77, 0.74);
+			bool panel = kind == 2.0 ? length(vec2(fract(fp.x / 1.7) - 0.5, (fract(fp.y / 1.6) - 0.5) * 1.6 / 1.7)) < 0.09 : fract(fp.y / 1.3) < 0.22 && abs(fract(fp.x / 1.8) - 0.5) < 0.3;
+			if (panel) { c = vec3(1.0); lamp = 4.0; }
+		}
+	}
+	c *= mix(1.0, 0.5, smoothstep(0.6, 6.0, D));
+	return vec4(c, lamp);
 }
 // Fake room behind the pane (interior mapping): o = pane point, d = view ray in room space.
 vec4 roomAt(vec2 pp, vec3 Vt, float seed, float shop) {
@@ -468,14 +549,17 @@ float cosT = clamp(-dot(V, Nw), 0.0, 1.0);
 float fres = 0.12 + 0.88 * pow(1.0 - cosT, 5.0);
 bool roomy = mode < 0.5 || mode == 4.0 || mode == 3.0 || (mode >= 1.0 && mode != 2.0 && mode != 6.0 && mode != 8.0);
 vec4 roomL = vec4(0.05, 0.05, 0.05, 0.6);
-if (mode == 1.0 || mode >= 9.0) roomL = shopAt(vPane, Vt, seed);
+if (mode == 1.0 || mode >= 9.0) roomL = shopAt(vPane, sz, Vt, seed, mode);
 else if (roomy) roomL = roomAt(vPane, Vt, seed, 0.0);
 vec3 room = roomL.rgb; float lampK = roomL.a;
 // Net curtains (függöny) in most flats.
 float veil = (mode < 0.5 && curtain < 0.7) ? 0.72 * step(p.y, sz.y * (curtain < 0.35 ? 0.98 : 0.72)) : 0.0;
 vec3 lace = vec3(0.85, 0.84, 0.8) * (0.9 + 0.1 * sin(p.x * 60.0 + sin(p.y * 40.0)));
 float inside = (1.0 - fres);
-vec3 transmitted = room * (uDayLight * 0.16 + lit * lightC * (0.6 + 1.6 * lampK) * (mode >= 1.0 && mode != 4.0 ? 0.38 + 0.6 * uNight : 1.0));
+// Shops by day are much dimmer than the street outside (reflections dominate); lit at night.
+vec3 transmitted = (mode == 1.0 || mode >= 9.0)
+	? room * (uDayLight * 0.05 + lit * lightC * (0.45 + 0.25 * lampK) * (0.2 + 0.75 * uNight))
+	: room * (uDayLight * 0.16 + lit * lightC * (0.6 + 1.6 * lampK) * (mode >= 1.0 && mode != 4.0 ? 0.38 + 0.6 * uNight : 1.0));
 if (mode == 7.0) transmitted = (room * 0.25 + vec3(0.9, 0.1, 0.8) * smoothstep(0.08, 0.0, abs(vPane.y - 0.92)) + vec3(0.1, 0.9, 1.0) * smoothstep(0.1, 0.0, abs(vPane.x - 0.08))) * (0.3 + 1.7 * lit);
 transmitted = mix(transmitted, lace * (uDayLight * 0.18 + lit * lightC * 0.9), veil);
 vec3 glassE = transmitted * inside + refl * fres * (0.7 + 0.6 * uDayLight);

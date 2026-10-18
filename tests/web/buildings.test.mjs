@@ -84,4 +84,128 @@ const FB = new FarBuf();
 for (const i of plan.infos) buildFar(i, FB, 7);
 assert.ok(FB.idx.length > 0 && FB.chunk.every((c) => c === 7), 'far shell carries its chunk');
 
+// --- ring orientation: outer rings and courtyard holes in either winding must give outward walls
+// (front faces towards the street / the courtyard, never culled away), for the detail and the shell.
+{
+	const { pointInPolygon } = await import('../../game/geo.js');
+	const { faceNormal } = await import('../../game/city/facadesGeom.js');
+	const sq = (x0, z0, x1, z1, cw) => (cw ? [[x0, z0], [x0, z1], [x1, z1], [x1, z0]] : [[x0, z0], [x1, z0], [x1, z1], [x0, z1]]);
+	const roads = [[[-20, -6], [60, -6]], [[-20, 46], [60, 46]], [[-6, -20], [-6, 60]], [[46, -20], [46, 60]]].map((pts, i) => ({ id: 50 + i, cls: 'residential', name: 'Kör utca', pts, width: 8 }));
+	const triFacing = (Pa, Na, Ia) => {
+		let good = 0, bad = 0;
+		for (let k = 0; k < Ia.length; k += 3) {
+			const a = Ia[k] * 3, b = Ia[k + 1] * 3, c = Ia[k + 2] * 3;
+			const ux = Pa[b] - Pa[a], uy = Pa[b + 1] - Pa[a + 1], uz = Pa[b + 2] - Pa[a + 2];
+			const vx = Pa[c] - Pa[a], vy = Pa[c + 1] - Pa[a + 1], vz = Pa[c + 2] - Pa[a + 2];
+			const gx = uy * vz - uz * vy, gy = uz * vx - ux * vz, gz = ux * vy - uy * vx;
+			const ar = Math.hypot(gx, gy, gz) / 2;
+			if (ar < 1e-6) continue;
+			const nl = Math.hypot(Na[a], Na[a + 1], Na[a + 2]);
+			if ((gx * Na[a] + gy * Na[a + 1] + gz * Na[a + 2]) / (2 * ar * nl) > 0.5) good += ar; else bad += ar;
+		}
+		return { good, bad };
+	};
+	for (const outerCW of [false, true]) for (const holeCW of [false, true]) {
+		const tag = `outer ${outerCW ? 'cw' : 'ccw'}, hole ${holeCW ? 'cw' : 'ccw'}`;
+		const blk = B(100, sq(0, 0, 40, 40, outerCW), { levels: 4, h: 4 * 3.6 + 1, holes: [sq(14, 14, 26, 26, holeCW)] });
+		const pl = planBuildings({ buildings: [blk], roads, areas: [], pois: [] });
+		const info = pl.infos[0];
+		const inside = (x, z) => pointInPolygon(x, z, info.rings[0]) && !pointInPolygon(x, z, info.rings[1]);
+		assert.equal(info.segs.filter((s) => s.kind === 'street').length, 4, `${tag}: four street fronts`);
+		assert.ok(info.segs.some((s) => s.kind === 'court' && s.ri === 1), `${tag}: courtyard walls`);
+		for (const s of info.segs) {
+			const mx = (s.ax + s.bx) / 2, mz = (s.az + s.bz) / 2;
+			assert.ok(!inside(mx + s.nx * 0.5, mz + s.nz * 0.5) && inside(mx - s.nx * 0.5, mz - s.nz * 0.5), `${tag}: ring ${s.ri} wall normal points out of the building`);
+		}
+		const o = { opaque: new OpaqueBuf(), glass: new GlassBuf(), rail: new RailBuf(), signs: [] };
+		buildDetail(info, o);
+		const Pv = o.opaque.P.view(), Nv = o.opaque.N.view(), Iv = o.opaque.I.view();
+		const f = triFacing(Pv, Nv, Iv);
+		assert.ok(f.bad < f.good * 0.002, `${tag}: detail triangles wound like their normals (bad ${f.bad.toFixed(1)} m²)`);
+		// Each wall's plane carries outward-facing plaster over most of its area (windows cut out).
+		for (const s of info.segs) {
+			let area = 0;
+			for (let k = 0; k < Iv.length; k += 3) {
+				const a = Iv[k] * 3;
+				if (Math.abs(Nv[a] / 127 - s.nx) > 0.02 || Math.abs(Nv[a + 2] / 127 - s.nz) > 0.02) continue;
+				let onPlane = true, t = 0;
+				for (let q = 0; q < 3; q++) {
+					const v = Iv[k + q] * 3;
+					const d = (Pv[v] - s.ax) * s.nx + (Pv[v + 2] - s.az) * s.nz;
+					t += ((Pv[v] - s.ax) * s.ux + (Pv[v + 2] - s.az) * s.uz) / 3;
+					if (Math.abs(d) > 1e-3) onPlane = false;
+				}
+				if (!onPlane || t < 0 || t > s.len) continue;
+				const b = Iv[k + 1] * 3, c = Iv[k + 2] * 3;
+				const ux = Pv[b] - Pv[a], uy = Pv[b + 1] - Pv[a + 1], uz = Pv[b + 2] - Pv[a + 2];
+				const vx = Pv[c] - Pv[a], vy = Pv[c + 1] - Pv[a + 1], vz = Pv[c + 2] - Pv[a + 2];
+				const gx = uy * vz - uz * vy, gz = ux * vy - uy * vx;
+				area += (gx * s.nx + gz * s.nz) / 2; // signed: inward-wound faces subtract
+			}
+			const full = s.len * (info.wallTop - info.base);
+			assert.ok(area > full * 0.4, `${tag}: ring ${s.ri} wall has outward plaster (${area.toFixed(0)} of ${full.toFixed(0)} m²)`);
+		}
+		const G = o.glass;
+		for (let k = 0; k < G.idx.length; k += 3) {
+			const a = G.idx[k] * 3, b = G.idx[k + 1] * 3, c = G.idx[k + 2] * 3, p = G.pos;
+			const gx = (p[b + 1] - p[a + 1]) * (p[c + 2] - p[a + 2]) - (p[b + 2] - p[a + 2]) * (p[c + 1] - p[a + 1]);
+			const gz = (p[b] - p[a]) * (p[c + 1] - p[a + 1]) - (p[b + 1] - p[a + 1]) * (p[c] - p[a]);
+			assert.ok(gx * G.nrm[a] + gz * G.nrm[a + 2] > 0, `${tag}: glass faces out`);
+		}
+		const fb = new FarBuf();
+		buildFar(info, fb, 0);
+		const ff = triFacing(fb.pos, fb.nrm, fb.idx);
+		assert.ok(ff.bad < ff.good * 0.002, `${tag}: far shell wound like its normals`);
+	}
+	assert.deepEqual(faceNormal([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]]).map(Math.round), [0, 0, 1]);
+	assert.deepEqual(faceNormal([[0, 0, 0], [1e-7, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]]).map(Math.round), [0, 0, 1], 'Newell normal survives a degenerate first corner');
+}
+
+// --- shop signs: content per shop kind, shared atlas cells, geometry on the fascia facing out
+{
+	const { signContent, SignCells, layoutSigns, cellUV, ATLAS } = await import('../../game/city/facadesSigns.js');
+	const { GLASS } = await import('../../game/city/facadesGeom.js');
+	const tob = signContent({ poi: { kind: 'tobacco', name: 'Nemzeti Dohánybolt' }, mode: GLASS.TOBACCO, seed: 0.3 });
+	assert.equal(tob.key, 'tobacco', 'every tobacconist shares one sign');
+	assert.equal(tob.text, 'NEMZETI DOHÁNYBOLT');
+	const vape = signContent({ poi: { kind: 'vape', name: 'Cloud Vape' }, mode: GLASS.VAPE, seed: 0.7 });
+	assert.ok(vape.glow > 2 && vape.design === 'neon', 'vape shops glow');
+	const ph = signContent({ poi: { kind: 'pharmacy', name: 'Szent József Gyógyszertár' }, mode: GLASS.PHARMACY, seed: 0.1 });
+	assert.ok(ph.blade && ph.sub === '', 'pharmacy: projecting cross, no repeated "gyógyszertár"');
+	assert.equal(signContent({ poi: null, mode: GLASS.EMPTY, seed: 0.2 }).place, 'window', 'to-let poster inside the window');
+	assert.equal(signContent({ poi: null, mode: GLASS.SHOP, seed: 0.1 }), null, 'some unnamed shops have no sign');
+	assert.ok(signContent({ poi: null, mode: GLASS.SHOP, seed: 0.9 }).key.startsWith('gen:'), 'unnamed shops get a trade sign');
+	assert.equal(signContent({ poi: { kind: 'school', name: 'Iskola' }, mode: GLASS.SHOP, seed: 0.9 }), null);
+	// Cells: shared by key, reference counted, recycled oldest-released first, null when all are in use.
+	const cells = new SignCells(2);
+	const a = cells.acquire('a'), a2 = cells.acquire('a'), b = cells.acquire('b');
+	assert.ok(a.fresh && !a2.fresh && a.cell === a2.cell && b.cell !== a.cell);
+	assert.equal(cells.acquire('c'), null, 'full atlas');
+	cells.release('b');
+	const c = cells.acquire('c');
+	assert.ok(c.fresh && c.cell === b.cell, 'released cell reused');
+	cells.release('a'); cells.release('a'); cells.release('c');
+	assert.equal(cells.acquire('a').fresh, false, 'a released key keeps its art until the cell is reused');
+	const uv = cellUV(ATLAS.CELLS - 1);
+	assert.ok(uv.every((v) => v >= 0 && v <= 1) && uv[0] < uv[2] && uv[1] < uv[3], 'cell uv inside the atlas');
+	// Geometry: the fascia sign of the test street's tobacconist faces the street and reads left to right.
+	const reqs = out.signs;
+	assert.ok(reqs.length > 0, 'shopfronts emit sign requests');
+	for (const flipRing of [false, true]) {
+		const F = flipRing ? { ax: 10, az: 0, ux: -1, uz: 0, nx: 0, nz: -1 } : { ax: 0, az: 0, ux: 1, uz: 0, nx: 0, nz: -1 };
+		const req = { F, t0: 1, t1: 4.6, y0: 4.2, y1: 4.9, d: 0.06, poi: { kind: 'tobacco', name: '' }, mode: GLASS.TOBACCO, seed: 0.5, bottom: 0 };
+		const { buf, keys } = layoutSigns([req], () => 3);
+		assert.deepEqual(keys, ['tobacco']);
+		const p = buf.pos, i = buf.idx;
+		// Faces -z (towards the street at z < 0): winding normal points along -z.
+		const ax = p[i[1] * 3] - p[i[0] * 3], az = p[i[1] * 3 + 2] - p[i[0] * 3 + 2], bx = p[i[2] * 3] - p[i[0] * 3], by = p[i[2] * 3 + 1] - p[i[0] * 3 + 1], bz = p[i[2] * 3 + 2] - p[i[0] * 3 + 2];
+		const gz = ax * by - (p[i[1] * 3 + 1] - p[i[0] * 3 + 1]) * bx;
+		assert.ok(gz < 0, 'sign faces the street');
+		assert.ok(p.every((v, k) => k % 3 !== 2 || v < 0), 'sign stands proud of the wall');
+		// Seen from the street (looking +z), the viewer's right is -x: u must grow towards -x.
+		const u0 = buf.uv[0], u1 = buf.uv[2], x0 = p[0], x1 = p[3];
+		assert.ok((u1 - u0) * (x1 - x0) < 0, `text reads left to right (${flipRing ? 'reversed' : 'forward'} wall)`);
+	}
+}
+
 console.log('buildings tests passed');
