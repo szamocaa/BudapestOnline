@@ -3,20 +3,25 @@
 //   facadesPlan.js  storeys, heights, styles, party walls / firewalls / courtyards, shops per wall;
 //   facadesGeom.js  the geometry: detailed 3D facades near the player, a light shell for the rest;
 //   facadesRoof.js  roofs for any footprint (hipped towards the street, gables on party walls...);
-//   facadesTex.js   the procedural texture array and the facade / glazing / far / railing shaders.
+//   facadesTex.js   the procedural texture array and the facade / glazing / far / railing shaders;
+//   facadesSigns.js shop signs: content per shop, one shared streamed atlas, merged per chunk.
 //
 // Levels of detail: the whole district is drawn as a far shell (one merged mesh per 500 m region,
 // windows drawn by the shader); within DETAIL_R of the camera every 100 m chunk gets its detailed
 // facades (built lazily, a few per frame) and the shader hides that chunk's shell. The shell also
-// casts all building shadows, so detailed chunks cost no extra shadow-pass draw calls.
+// casts all building shadows, so detailed chunks cost no extra shadow-pass draw calls. Chunks within
+// SIGN_R also get one shop-sign mesh (shared material and atlas).
+//
+// Facades face outwards for either ring winding (outer rings and courtyard holes; see the
+// orientation test in tests/web/buildings.test.mjs). A camera inside a footprint sees only trim
+// sides floating in the air (walls are culled from behind): that is a bad viewpoint, not a bug.
 //
 // TODO(buildings), in order of value:
-//   * shop signs (facadesSigns.js, one shared atlas, one mesh per near chunk): roller shutters
-//     pulled down over closed shops at night, a few lit "NYITVA" (open) signs, projecting blade signs
-//     for cafés and bars as well;
 //   * near chunks (< 60 m) could cast their own shadows (cornice/balcony shadow lines);
 //   * plaster palette and dirt tuning against photos; corner chamfers/bays/turrets (info.turret);
-//   * the speckle-prone ray-box room (roomAt) is fine on flats; shops use the parallax shopAt.
+//   * signs: a few lit "NYITVA" (open) boards, projecting blade signs for cafés and bars too;
+//     the shop glass could reflect the real opposite facade colour instead of uStreet;
+//   * the speckle-prone ray-box room (roomAt) is fine on flats; shops use the layered shopAt.
 import * as THREE from '../vendor/three.module.min.js';
 import { planBuildings, chunkIndex, occupancyAt, CHUNK, GRID_X0, GRID_Z0, GRID_W, GRID_H } from './facadesPlan.js';
 import { OpaqueBuf, GlassBuf, RailBuf, FarBuf, buildDetail, buildFar } from './facadesGeom.js';
