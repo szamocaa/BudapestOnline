@@ -180,8 +180,8 @@ export function makeLook(seed) {
 	if (!female && !teen) { const b = r(); if (b < 0.16) acc |= 128; else if (b < 0.42) acc |= 64; }
 	// Habits (looks only: never read by the danger system).
 	let walkStyle = choose([0.66, teen ? 0.3 : 0.14, 0.05, female ? 0.06 : 0.15], r);
-	if (acc & 24) walkStyle = walkStyle === 3 ? 3 : 0;
-	const idleStyle = choose([0.3, 0.25, 0.07, 0.18, 0.1, elderly ? 0.03 : 0.08], r);
+	let idleStyle = choose([0.3, 0.25, 0.07, 0.18, 0.1, elderly ? 0.03 : 0.08], r);
+	if (acc & 24) { walkStyle = 0; idleStyle = 0; } // the right hand holds a bag or a stick
 	if (headwear === 3) hairStyle = 2;
 	return {
 		skin, hair, top, bottom, legs, shoes, accent, bag,

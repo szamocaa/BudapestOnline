@@ -217,8 +217,13 @@ void pPose(out vec3 pos, out vec3 nrm) {
 	if (upper == 1 && (region == 2 || group == 6)) rest += normal * 0.016; // puffer: thicker
 	if (group == 1 && hs == 5 && region == 1) rest += normalize(rest - pHEAD) * 0.022; // curly: volume
 	vec3 n0 = normal;
-	vec3 p = pApply(int(aSkin.x + 0.5), rest, n0);
-	if (aSkin.z > 0.001) {
+	vec3 p;
+	if (group == 4 && int(aInfo.y + 0.5) == 8) {
+		// Shopping bag: hangs from the hand grip like a pendulum, whatever the arm does.
+		vec3 g0 = pJ[12] + vec3(-0.017, -0.37, 0.035), gn = vec3(0.);
+		p = pApply(12, g0, gn) + (rest - g0);
+	} else p = pApply(int(aSkin.x + 0.5), rest, n0);
+	if (aSkin.z > 0.001 && !(group == 4 && int(aInfo.y + 0.5) == 8)) {
 		vec3 n1 = normal;
 		vec3 p1 = pApply(int(aSkin.y + 0.5), rest, n1);
 		p = mix(p, p1, aSkin.z);
