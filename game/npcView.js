@@ -1,6 +1,46 @@
-// Draws the crowd as instanced low-poly people (legs, torso, arms, head, hair) with walking animation.
+// Draws the crowd: procedural humans (game/people/body.js) instanced in three levels of detail and
+// posed on the GPU (game/people/shader.js). Per frame only a few numbers per person are uploaded
+// (position, yaw, gait angle, state); looks are packed once per person.
+//
+//   const view = new CrowdView(scene, crowd, { max, radius });
+//   view.update(px, pz, frame) -> number of people drawn
+//   view.parts                  -> the meshes (the M2 platform lifts them to platform height)
+//
+// Draw calls: one per level of detail, plus a shadow-only copy of the nearest people (cheaper
+// geometry) that is drawn in the shadow maps only: 3 + 2 (two sun cascades) on high.
+//
+// TODO(people), in order of value: uniformed roles (police pairs, BKK inspectors, FKF sweepers in
+// orange: new look fields + ROLE in crowd.js), standing chat groups and sitting on benches
+// (data.props benches), children walking with a parent, prams / dogs / suitcases near Keleti,
+// tracksuit side stripes, a smoother LOD1 -> LOD2 transition (dither fade).
 import * as THREE from './vendor/three.module.min.js';
-import { makeLook, STATE } from './crowd.js';
+import { makeLook } from './crowd.js';
+import { buildPerson } from './people/body.js';
+import { createPeopleMaterial, createPeopleDepthMaterial } from './people/shader.js';
+import { STRIDE, packLook, animOf, gait } from './people/looks.js';
+
+// Level-of-detail distances (m) and how many people each level can hold at most.
+export const LOD_DIST = [24, 70];
+const SHADOW_DIST = 40;
+
+let baseCache = null;
+function baseAttributes() {
+	if (baseCache) return baseCache;
+	baseCache = [0, 1, 2].map((lod) => {
+		const m = buildPerson(lod);
+		return {
+			index: new THREE.BufferAttribute(m.index, 1),
+			position: new THREE.BufferAttribute(m.position, 3),
+			normal: new THREE.BufferAttribute(m.normal, 3),
+			aSkin: new THREE.BufferAttribute(m.skin, 4),
+			aInfo: new THREE.BufferAttribute(m.info, 4),
+			aFem: new THREE.BufferAttribute(m.fem, 3),
+			aFat: new THREE.BufferAttribute(m.fat, 3),
+			triangles: m.triangles,
+		};
+	});
+	return baseCache;
+}
 
 export class CrowdView {
 	constructor(scene, crowd, { max = 900, radius = 160 } = {}) {
@@ -8,52 +48,54 @@ export class CrowdView {
 		this.max = max;
 		this.radius = radius;
 		this.looks = new Map();
-		const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.85 });
-		const skinMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.6 });
-		// Unit-sized parts, pivot at the joint (top of limbs) so rotation swings them naturally.
-		const leg = new THREE.CylinderGeometry(0.075, 0.06, 1, 6).translate(0, -0.5, 0);
-		const arm = new THREE.CylinderGeometry(0.05, 0.045, 1, 6).translate(0, -0.5, 0);
-		const torso = new THREE.CylinderGeometry(0.19, 0.16, 1, 8).translate(0, 0.5, 0);
-		const head = new THREE.SphereGeometry(0.5, 10, 8);
-		const hair = new THREE.SphereGeometry(0.53, 10, 6, 0, Math.PI * 2, 0, Math.PI * 0.55);
-		this.legs = new THREE.InstancedMesh(leg, mat, max * 2);
-		this.arms = new THREE.InstancedMesh(arm, mat, max * 2);
-		this.torso = new THREE.InstancedMesh(torso, mat, max);
-		this.head = new THREE.InstancedMesh(head, skinMat, max);
-		this.hair = new THREE.InstancedMesh(hair, mat, max);
-		this.parts = [this.legs, this.arms, this.torso, this.head, this.hair];
-		for (const p of this.parts) {
-			p.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-			p.castShadow = true;
-			p.frustumCulled = false;
-			p.count = 0;
-			scene.add(p);
-		}
-		this.slotId = new Int32Array(max).fill(-1);
-		this.m = new THREE.Matrix4();
-		this.q = new THREE.Quaternion();
-		this.e = new THREE.Euler();
-		this.p = new THREE.Vector3();
-		this.s = new THREE.Vector3();
-		this.c = new THREE.Color();
+		this.material = createPeopleMaterial();
+		this.depthMaterial = createPeopleDepthMaterial(this.material.userData.uniforms);
+		const caps = [Math.min(max, 64), Math.min(max, 320), max];
+		this.lods = caps.map((cap, lod) => this.makeBatch(lod, cap, false));
+		this.shadow = this.makeBatch(1, Math.min(max, 72), true);
+		this.parts = [...this.lods.map((b) => b.mesh), this.shadow.mesh];
+		for (const p of this.parts) scene.add(p);
 		this.visible = [];
+		this.t0 = performance.now();
+	}
+
+	makeBatch(lod, cap, shadowOnly) {
+		const base = baseAttributes()[lod];
+		const geo = new THREE.InstancedBufferGeometry();
+		geo.setIndex(base.index);
+		for (const k of ['position', 'normal', 'aSkin', 'aInfo', 'aFem', 'aFat']) geo.setAttribute(k, base[k]);
+		const arr = new Float32Array(cap * STRIDE);
+		const ib = new THREE.InstancedInterleavedBuffer(arr, STRIDE, 1);
+		ib.setUsage(THREE.DynamicDrawUsage);
+		['iA', 'iB', 'iC', 'iD', 'iE', 'iF'].forEach((name, k) => geo.setAttribute(name, new THREE.InterleavedBufferAttribute(ib, 4, k * 4)));
+		geo.instanceCount = 0;
+		const mesh = new THREE.Mesh(geo, this.material);
+		mesh.name = shadowOnly ? 'people-shadow' : `people-lod${lod}`;
+		mesh.frustumCulled = false;
+		mesh.castShadow = shadowOnly;
+		mesh.receiveShadow = !shadowOnly;
+		mesh.customDepthMaterial = this.depthMaterial;
+		const batch = { mesh, geo, arr, ib, cap, n: 0, lod };
+		if (shadowOnly) {
+			// Drawn into the shadow maps only: no instances in the colour pass (no draw call).
+			mesh.onBeforeShadow = () => { geo.instanceCount = batch.n; };
+			mesh.onAfterShadow = () => { geo.instanceCount = 0; };
+		}
+		return batch;
 	}
 
 	look(id) {
 		let l = this.looks.get(id);
 		if (!l) {
-			l = makeLook(id);
-			l.cSkin = new THREE.Color(l.skin);
-			l.cHair = new THREE.Color(l.cap ? '#1d2a3a' : l.hair);
-			l.cTop = new THREE.Color(l.top);
-			l.cBottom = new THREE.Color(l.bottom);
+			const L = makeLook(id);
+			l = { packed: packLook(L), hs: L.height / 1.75, seed: ((id * 0.6180339887) % 1 + 1) % 1 };
 			this.looks.set(id, l);
 			if (this.looks.size > 20000) this.looks.delete(this.looks.keys().next().value);
 		}
 		return l;
 	}
 
-	/** Indices of people within the draw radius, nearest first, at most `max`. */
+	/** Indices of people within the draw radius, nearest first when there are too many, at most `max`. */
 	select(cx, cz) {
 		const c = this.crowd, r2 = this.radius * this.radius, out = this.visible;
 		out.length = 0;
@@ -70,88 +112,37 @@ export class CrowdView {
 		return out;
 	}
 
+	write(batch, i, L) {
+		const c = this.crowd, a = batch.arr, o = batch.n++ * STRIDE;
+		const anim = animOf(c.state[i]);
+		const speed = c.speed ? c.speed[i] : 1.3;
+		const [angle, amp] = gait(c.phase[i], speed, L.hs, anim);
+		a[o] = c.x[i]; a[o + 1] = 0; a[o + 2] = c.z[i]; a[o + 3] = c.yaw[i];
+		a[o + 4] = angle; a[o + 5] = anim; a[o + 6] = amp; a[o + 7] = L.seed;
+		a.set(L.packed, o + 8);
+	}
+
 	update(cx, cz) {
-		const c = this.crowd, vis = this.select(cx, cz);
+		const vis = this.select(cx, cz);
 		const n = vis.length / 2;
-		const { m, q, e, p, s } = this;
+		this.material.userData.uniforms.uPeopleTime.value = ((performance.now() - this.t0) / 1000) % 3600;
+		const [b0, b1, b2] = this.lods, sh = this.shadow;
+		const d0 = LOD_DIST[0] ** 2, d1 = LOD_DIST[1] ** 2, ds = SHADOW_DIST ** 2;
+		b0.n = b1.n = b2.n = sh.n = 0;
 		for (let k = 0; k < n; k++) {
-			const i = vis[k * 2];
-			const id = c.id[i];
-			const L = this.look(id);
-			const H = L.height, B = L.build;
-			const st = c.state[i];
-			const yaw = c.yaw[i];
-			const ph = c.phase[i];
-			const moving = st === STATE.WALK || st === STATE.FLEE || st === STATE.APPROACH;
-			const amp = moving ? (st === STATE.FLEE ? 0.75 : 0.42) : 0;
-			const swing = Math.sin(ph * 2.2) * amp;
-			const bob = moving ? Math.abs(Math.cos(ph * 2.2)) * 0.03 : 0;
-			const down = st === STATE.KNOCKED;
-			const x = c.x[i], z = c.z[i];
-			const legLen = H * 0.47, torsoLen = H * 0.32, headD = H * 0.13;
-			const hipY = legLen + bob;
-			const cosY = Math.cos(yaw), sinY = Math.sin(yaw);
-			// Local (right, up, forward) -> world, forward = (sin yaw, cos yaw).
-			const W = (lx, ly, lz) => p.set(x + lx * cosY + lz * sinY, ly, z - lx * sinY + lz * cosY);
-
-			if (down) {
-				// Lying on the ground.
-				e.set(Math.PI / 2, yaw, 0, 'YXZ');
-				q.setFromEuler(e);
-				m.compose(W(0, 0.18, -0.2), q, s.set(B, torsoLen + legLen, B));
-				this.torso.setMatrixAt(k, m);
-				for (let side = 0; side < 2; side++) {
-					m.compose(W(0, -10, 0), q, s.set(0, 0, 0));
-					this.legs.setMatrixAt(k * 2 + side, m);
-					this.arms.setMatrixAt(k * 2 + side, m);
-				}
-				m.compose(W(0, 0.15, H * 0.62), q.identity(), s.set(headD, headD, headD));
-				this.head.setMatrixAt(k, m);
-				this.hair.setMatrixAt(k, m);
-			} else {
-				const stunned = st === STATE.STUNNED;
-				for (let side = 0; side < 2; side++) {
-					const sx = side ? 0.1 * B : -0.1 * B;
-					e.set(side ? swing : -swing, yaw, 0, 'YXZ');
-					q.setFromEuler(e);
-					m.compose(W(sx, hipY, 0), q, s.set(B, legLen, B));
-					this.legs.setMatrixAt(k * 2 + side, m);
-					const ax = side ? 0.23 * B : -0.23 * B;
-					// Arms swing opposite to legs; stunned people cover their face.
-					const armRot = stunned ? -2.4 : side ? -swing * 0.8 : swing * 0.8;
-					e.set(armRot, yaw, side ? -0.06 : 0.06, 'YXZ');
-					q.setFromEuler(e);
-					m.compose(W(ax, hipY + torsoLen * 0.95, 0), q, s.set(B, H * 0.34, B));
-					this.arms.setMatrixAt(k * 2 + side, m);
-				}
-				e.set(stunned ? 0.35 : 0.04, yaw, 0, 'YXZ');
-				q.setFromEuler(e);
-				m.compose(W(0, hipY, 0), q, s.set(B, torsoLen, B * 0.8));
-				this.torso.setMatrixAt(k, m);
-				const headY = hipY + torsoLen + headD * 0.62;
-				m.compose(W(0, headY, 0), q, s.set(headD, headD * 1.1, headD));
-				this.head.setMatrixAt(k, m);
-				const hs = L.longHair ? 1.08 : 1;
-				m.compose(W(0, headY + headD * 0.04, L.longHair ? -0.02 : 0), q, s.set(headD * hs, headD * (L.longHair ? 1.25 : 1.05), headD * hs));
-				this.hair.setMatrixAt(k, m);
-			}
-
-			if (this.slotId[k] !== id) {
-				this.slotId[k] = id;
-				this.legs.setColorAt(k * 2, L.cBottom);
-				this.legs.setColorAt(k * 2 + 1, L.cBottom);
-				this.arms.setColorAt(k * 2, L.cTop);
-				this.arms.setColorAt(k * 2 + 1, L.cTop);
-				this.torso.setColorAt(k, L.cTop);
-				this.head.setColorAt(k, L.cSkin);
-				this.hair.setColorAt(k, L.cHair);
-			}
+			const i = vis[k * 2], d = vis[k * 2 + 1];
+			const L = this.look(this.crowd.id[i]);
+			let b = d < d0 ? b0 : d < d1 ? b1 : b2;
+			if (b === b0 && b0.n >= b0.cap) b = b1;
+			if (b === b1 && b1.n >= b1.cap) b = b2;
+			if (b.n >= b.cap) continue;
+			this.write(b, i, L);
+			if (d < ds && sh.n < sh.cap) this.write(sh, i, L);
 		}
-		this.legs.count = this.arms.count = n * 2;
-		this.torso.count = this.head.count = this.hair.count = n;
-		for (const part of this.parts) {
-			part.instanceMatrix.needsUpdate = true;
-			if (part.instanceColor) part.instanceColor.needsUpdate = true;
+		for (const b of [b0, b1, b2, sh]) {
+			if (b !== sh) b.geo.instanceCount = b.n;
+			b.ib.clearUpdateRanges();
+			if (b.n) { b.ib.addUpdateRange(0, b.n * STRIDE); b.ib.needsUpdate = true; }
 		}
 		return n;
 	}
