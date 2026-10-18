@@ -70,15 +70,32 @@ export function buildWalkGraph(roads) {
 
 // ---------------------------------------------------------------- looks
 
-// Skin tones from light to deep. A mixed city population with plenty of darker tones.
+// Skin tones from light to deep. A mixed city population with plenty of darker tones (the VIII.
+// district has a large Roma community and many residents with African and Asian roots). Values are
+// sRGB albedo, kept warm and saturated so shading never turns them grey.
 export const SKIN_TONES = [
-	{ hex: '#f2d3bd', w: 0.13 }, { hex: '#e6bc98', w: 0.15 }, { hex: '#d6a37c', w: 0.14 }, { hex: '#c08b62', w: 0.14 },
-	{ hex: '#a8714a', w: 0.14 }, { hex: '#8d5a3b', w: 0.12 }, { hex: '#6e432a', w: 0.1 }, { hex: '#4e2f1e', w: 0.08 },
+	{ hex: '#f0cfb6', w: 0.13 }, { hex: '#e3b892', w: 0.15 }, { hex: '#d29f76', w: 0.14 }, { hex: '#bb8559', w: 0.14 },
+	{ hex: '#a26b42', w: 0.14 }, { hex: '#875433', w: 0.12 }, { hex: '#6a3f25', w: 0.1 }, { hex: '#4a2b19', w: 0.08 },
 ];
 const HAIR = ['#141110', '#1f1813', '#2e2219', '#4a3424', '#6b4c33', '#9c7a4d', '#b9b2a8', '#d9d4ca'];
-const TOPS = ['#1c1c1f', '#26303f', '#3a3a3e', '#4b5243', '#5c2a2e', '#6d6a64', '#2f4a63', '#7a5c3c', '#8e8e90', '#a33b2f', '#2e5e4e', '#c9b48a', '#e6e2da', '#3d2f4f'];
-const BOTTOMS = ['#1a1a1c', '#22324a', '#2f4d73', '#3b3b3b', '#4a4238', '#5e5a50', '#b8a88a'];
-const SHOES = ['#111111', '#2a2a2a', '#e8e8e8', '#5a4030'];
+const HAIR_W = [0.24, 0.24, 0.2, 0.13, 0.09, 0.05, 0.03, 0.02];
+const HAIR_OLD = ['#6d6964', '#8f8a84', '#aaa59e', '#c8c4bc', '#dedad2'];
+const HAIR_DYED = ['#7a2a1e', '#a8673a', '#c9a77a', '#3a1d2e'];
+// October in Budapest: mostly dark outerwear with a few accents.
+const COATS = ['#16171a', '#1e2026', '#24282f', '#2b2e35', '#1f2a3a', '#283650', '#2f3b2c', '#3b3a2a', '#3a2a22', '#4a3326', '#6b4f36', '#8a6a4a', '#9c8a6e', '#5a1f24', '#3c4a55', '#4d4f52', '#6b6f73', '#7a2e1f', '#2d4a3e', '#c9c3b6'];
+const PUFFERS = ['#111214', '#15171b', '#1a1d24', '#202a3a', '#2e3a2c', '#3d3f44', '#7c6a52', '#8a1f1f', '#1f3b5a', '#c8c2b4', '#4a4a2e'];
+const SPORT = ['#151515', '#1d1d20', '#2b2b2e', '#3a3d42', '#6e7177', '#1d2b4a', '#5a1a22', '#2f4b3a', '#8a8d91', '#c9c9c9'];
+const KNITS = ['#5a4632', '#7a6a58', '#3a2f2a', '#6b2a2a', '#2e3a4a', '#8c7b62', '#a89a84', '#4a4f3a'];
+const JEANS = ['#1d2a44', '#26385a', '#2f4670', '#3a5580', '#1a1d24', '#2b2b2e', '#4a5a72', '#53627a'];
+const TROUSERS = ['#151618', '#22252b', '#2e2b26', '#3d3a33', '#4a4438', '#2a3140', '#5a5348', '#6b6253'];
+const TRACK = ['#121212', '#1c1f2a', '#2a2a2e', '#3a3d42'];
+const SKIRTS = ['#141414', '#2a2a2e', '#3a2a22', '#4a2b2e', '#2b3442', '#5a4a3a', '#7a6a58', '#6b5a2a'];
+const TIGHTS = ['#101012', '#17171b', '#221d1b', '#2e2420'];
+const SNEAKERS = ['#f0f0ee', '#e4e2dc', '#1a1a1a', '#2a2d33', '#7a7d82', '#c9c3b6', '#e8e8e8'];
+const BOOTS = ['#1a1512', '#2a1f18', '#3a2a1e', '#141414', '#4a3424'];
+const DRESS = ['#141414', '#2a1d15', '#1c1612'];
+const ACCENTS = ['#7a1f24', '#b5762a', '#2f4b3a', '#d8d2c4', '#3a4a6b', '#6b6f73', '#141414', '#8a3a2a', '#c9a227', '#4a2a4a', '#9c5a2a', '#1f3b5a', '#a3a09a'];
+const BAGS = ['#141414', '#1c1814', '#2a1f18', '#5a3d2b', '#3a3d42', '#7a5a3a', '#1d2a44', '#6b2a2a'];
 
 function pick(list, r) {
 	return list[Math.floor(r() * list.length)];
@@ -90,22 +107,89 @@ function pickWeighted(list, r) {
 	return list[list.length - 1];
 }
 
+/** Index from a list of weights. */
+function choose(weights, r) {
+	let x = r() * weights.reduce((s, w) => s + w, 0);
+	for (let i = 0; i < weights.length; i++) if ((x -= weights[i]) <= 0) return i;
+	return weights.length - 1;
+}
+
+/** Normal-ish random number (sum of three uniforms), mean 0, sd ~1. */
+const gauss = (r) => (r() + r() + r() - 1.5) * 2;
+
+// Style codes shared with game/people/body.js (kept as numbers here so the simulation has no
+// rendering imports): hair 0 buzz, 1 short, 2 long, 3 ponytail, 4 bun, 5 curly, 6 bald;
+// headwear 0 none, 1 cap, 2 beanie, 3 headscarf; upper 0 jacket, 1 puffer, 2 coat, 3 hoodie,
+// 4 tracksuit top, 5 knit; lower 0 jeans, 1 trousers, 2 skirt + tights, 3 tracksuit; shoes
+// 0 sneakers, 1 boots, 2 dress shoes; acc bits 1 scarf, 2 backpack, 4 cross-body bag, 8 shopping
+// bag, 16 walking stick, 32 glasses, 64 stubble, 128 beard; walk 0 normal, 1 texting, 2 phone at
+// the ear, 3 hands in pockets; idle 0 standing, 1 texting, 2 phoning, 3 pockets, 4 arms crossed,
+// 5 smoking.
+
+/**
+ * How a person looks (and only that: behaviour comes from Crowd.behaviourRandom, a separate stream).
+ * Mid-October Budapest street clothing; a diverse population.
+ */
 export function makeLook(seed) {
 	const r = rng(hashString('look:' + seed));
 	const age = r();
 	const elderly = age > 0.85, teen = age < 0.12;
+	const female = r() < 0.51;
+	const skin = pickWeighted(SKIN_TONES, r).hex;
+	const ageK = elderly ? 0.45 + r() * 0.55 : 0;
+	// Heights: men ~177 cm, women ~164 cm (Hungarian averages), teens a bit shorter, elderly stoop.
+	let height = female ? 1.645 + gauss(r) * 0.06 : 1.772 + gauss(r) * 0.068;
+	if (teen) height -= 0.04 + r() * 0.06;
+	if (elderly) height -= 0.03;
+	height = Math.min(1.98, Math.max(1.47, height));
+	const heavy = Math.max(-0.45, Math.min(1, (r() + r()) * 0.75 - 0.55 + (elderly ? 0.2 : 0) - (teen ? 0.25 : 0)));
+	const fem = female ? 0.86 + r() * 0.14 : r() * 0.1;
+	// Hair.
+	let hairStyle = female
+		? [2, 3, 4, 1, 5, 0][choose([0.38, 0.2, 0.15, 0.14, 0.11, 0.02], r)]
+		: [0, 1, 5, 6, 2, 3][choose([0.3, 0.42, 0.08, elderly ? 0.35 : 0.08, 0.04, 0.02], r)];
+	let hair = elderly ? pick(HAIR_OLD, r) : HAIR[choose(HAIR_W, r)];
+	if (!elderly && female && r() < 0.12) hair = pick(HAIR_DYED, r);
+	// Headwear (cold mornings: beanies; caps on young men; headscarves for some women).
+	let headwear = 0;
+	const hw = r();
+	if (female && hw < (elderly ? 0.1 : 0.025)) headwear = 3;
+	else if (hw < 0.14) headwear = 2;
+	else if (!female && hw < (teen ? 0.3 : 0.2)) headwear = 1;
+	// Clothes.
+	const upper = choose([0.3, 0.2, female || elderly ? 0.22 : 0.12, teen ? 0.3 : 0.12, teen ? 0.12 : 0.06, 0.1], r);
+	let lower = female ? choose([0.4, 0.27, elderly ? 0.3 : 0.22, 0.08], r) : choose([0.5, 0.36, 0, upper === 4 ? 0.9 : 0.12], r);
+	if (upper === 4 && r() < 0.6 && lower !== 2) lower = 3;
+	const shoeStyle = choose([teen ? 0.9 : 0.6, female ? 0.3 : 0.2, elderly ? 0.35 : 0.12], r);
+	const topList = [COATS, PUFFERS, COATS, SPORT, SPORT, KNITS][upper];
+	const top = pick(topList, r);
+	const bottomList = [JEANS, TROUSERS, SKIRTS, TRACK][lower];
+	const bottom = pick(bottomList, r);
+	const legs = lower === 2 ? pick(TIGHTS, r) : bottom;
+	const shoes = pick([SNEAKERS, BOOTS, DRESS][shoeStyle], r);
+	const accent = pick(ACCENTS, r);
+	const bag = pick(BAGS, r);
+	// Accessories.
+	let acc = 0;
+	if (r() < (upper === 2 ? 0.4 : 0.15)) acc |= 1;
+	if (r() < (teen ? 0.5 : elderly ? 0.03 : 0.18)) acc |= 2;
+	if (r() < (female ? 0.38 : 0.07) && !(acc & 2)) acc |= 4;
+	if (r() < (elderly ? 0.3 : 0.1)) acc |= 8;
+	if (elderly && r() < 0.25) acc |= 16;
+	if (r() < (elderly ? 0.5 : 0.17)) acc |= 32;
+	if (!female && !teen) { const b = r(); if (b < 0.16) acc |= 128; else if (b < 0.42) acc |= 64; }
+	// Habits (looks only: never read by the danger system).
+	let walkStyle = choose([0.66, teen ? 0.3 : 0.14, 0.05, female ? 0.06 : 0.15], r);
+	if (acc & 24) walkStyle = walkStyle === 3 ? 3 : 0;
+	const idleStyle = choose([0.3, 0.25, 0.07, 0.18, 0.1, elderly ? 0.03 : 0.08], r);
+	if (headwear === 3) hairStyle = 2;
 	return {
-		skin: pickWeighted(SKIN_TONES, r).hex,
-		hair: elderly ? pick(HAIR.slice(6), r) : pick(HAIR.slice(0, 6), r),
-		top: pick(TOPS, r),
-		bottom: pick(BOTTOMS, r),
-		shoes: pick(SHOES, r),
-		height: (teen ? 1.55 : 1.6) + r() * (teen ? 0.2 : 0.32),
-		build: 0.85 + r() * 0.35,
-		longHair: r() < 0.35,
-		cap: r() < 0.12,
-		elderly,
-		teen,
+		skin, hair, top, bottom, legs, shoes, accent, bag,
+		height, build: 0.9 + heavy * 0.2, heavy, fem, age: ageK,
+		hairStyle, headwear, upper, lower, shoeStyle, acc, walkStyle, idleStyle,
+		longHair: hairStyle === 2 || hairStyle === 3,
+		cap: headwear === 1,
+		female, elderly, teen,
 	};
 }
 
