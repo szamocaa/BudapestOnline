@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import { splitStage, chainFront, signPieces } from '../../game/city/landmarks/erkel.js';
 import { hallFrame } from '../../game/city/landmarks/vasarcsarnok.js';
+import { gatePlan } from '../../game/city/landmarks/kerepesi.js';
 import { simplifyRing, offsetRing, edgeNormals, Frame } from '../../game/city/landmarks/b-kit.js';
 
 // Frame round trip.
@@ -64,6 +65,15 @@ import { simplifyRing, offsetRing, edgeNormals, Frame } from '../../game/city/la
 	const [dx] = frame.d(0, 0, 1);
 	assert.ok(dx < -0.9, 'front faces west');
 	assert.ok(Math.abs(w - 70) < 1e-6 && Math.abs(d - 72) < 1e-6);
+}
+
+// Kerepesi: the gate plan is symmetric and fits the given opening.
+{
+	const p = gatePlan(30);
+	assert.ok(p.piers.length >= 2);
+	const xs = p.piers.map((q) => q.x);
+	assert.ok(Math.abs(xs[0] + xs[xs.length - 1]) < 1e-9, 'symmetric');
+	assert.ok(Math.max(...xs.map(Math.abs)) <= 15);
 }
 
 console.log('landmarks-b tests passed');
