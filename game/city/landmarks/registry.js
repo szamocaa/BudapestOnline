@@ -7,5 +7,6 @@ import keleti from './keleti.js';
 
 // landmarks-b: squares, churches, theatre, market hall, cemetery.
 import erkel from './erkel.js';
+import vasarcsarnok from './vasarcsarnok.js';
 
-export const LANDMARKS = [keleti, erkel];
+export const LANDMARKS = [keleti, erkel, vasarcsarnok];
