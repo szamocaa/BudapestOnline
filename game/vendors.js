@@ -5,6 +5,8 @@
 // A stall: pop-up gazebo (or a parasol), folding table with a cloth, a glass display case full of
 // colourful disposable vapes, tent cards with prices in Ft, an A-frame board on the pavement and LED
 // strips that glow at night. The seller stands behind the table facing the street.
+// TODO(people): closed stalls (vendorOpen false) could fold the display / switch the LEDs off via
+// world.ctx.onUpdate(frame.hours); a few customers queueing at busy stalls.
 import * as THREE from './vendor/three.module.min.js';
 import { ROLE } from './crowd.js';
 import { rng } from './geo.js';
@@ -273,7 +275,12 @@ export function placeVendors(scene, data, graph, crowd, world, { stalls = 14, se
 		// The seller: behind the stall's table facing the street, or next to the shop door.
 		const i = crowd.spawn(ROLE.VENDOR, node);
 		if (i >= 0) {
-			if (s.shop) { crowd.x[i] = x + 0.9; crowd.z[i] = z + 0.9; crowd.yaw[i] = r() * Math.PI * 2; }
+			if (s.shop) {
+				// Outside the shop door, off the wall, looking at the street.
+				const [px, pz] = world ? world.collide(x + 0.9, z + 0.9, 0.5) : [x + 0.9, z + 0.9];
+				const [nx, nz] = graph.nodes[node];
+				crowd.x[i] = px; crowd.z[i] = pz; crowd.yaw[i] = Math.atan2(nx - px, nz - pz);
+			}
 			else { const [px, , pz] = frame(x, z, yaw).p(0.15, 0, -0.55); crowd.x[i] = px; crowd.z[i] = pz; crowd.yaw[i] = yaw; }
 		}
 		vendors.push({ x, z, yaw, name: s.name, shop: s.shop, id: i >= 0 ? crowd.id[i] : -1 });
@@ -314,12 +321,13 @@ function stallPlace(graph, world, x, z) {
 	for (const e of graph.adj[node]) {
 		const [bx, bz] = graph.nodes[e.to];
 		const len = Math.hypot(bx - nx, bz - nz);
-		if (len < 8 || e.offset < 2) continue; // footpaths and short stubs: no room
+		if (len < 24 || e.offset < 2) continue; // footpaths and short stubs: no room
+		const along = Math.min(14, len / 2); // well clear of the crossing street
 		const dx = (bx - nx) / len, dz = (bz - nz) / len;
 		for (const side of [1, -1]) {
-			// 6 m along the edge (off the junction), 1.5 m beyond the walking line.
+			// Along the street, 1.5 m beyond the line people walk on.
 			const o = (e.offset + 1.5) * side;
-			const px = nx + dx * 6 - dz * o, pz = nz + dz * 6 + dx * o;
+			const px = nx + dx * along - dz * o, pz = nz + dz * along + dx * o;
 			if (!world) return { x: px, z: pz, yaw: Math.atan2(dz * side, -dx * side) };
 			const [qx, qz] = world.collide(px, pz, 1.4);
 			if (Math.hypot(qx - px, qz - pz) > 0.8) continue;

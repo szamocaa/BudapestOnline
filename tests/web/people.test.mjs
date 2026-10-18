@@ -87,3 +87,33 @@ const [ar] = gait(1e7 + 0.3, 3.6, 1, 2);
 assert.ok(ar >= 0 && ar < Math.PI * 2);
 assert.equal(STRIDE, 24);
 console.log(`ok people: triangles per LOD ${tris.join(' / ')}, mean height m ${mean(H.m).toFixed(2)} f ${mean(H.f).toFixed(2)}, darker tones ${(deep / 50).toFixed(0)}%`);
+
+// Vape stalls: on the pavement beside a street (not on the carriageway), facing it, seller behind.
+{
+	const { placeVendors } = await import('../../game/vendors.js');
+	const { buildWalkGraph, Crowd } = await import('../../game/crowd.js');
+	const roads = [];
+	for (let i = 0; i <= 6; i++) {
+		roads.push({ cls: 'secondary', width: 12, name: `U${i}`, pts: Array.from({ length: 7 }, (_, k) => [i * 100, k * 100]) });
+		roads.push({ cls: 'residential', width: 8, name: `K${i}`, pts: Array.from({ length: 7 }, (_, k) => [k * 100, i * 100]) });
+	}
+	const graph = buildWalkGraph(roads);
+	const crowd = new Crowd(graph, 100, 1);
+	const added = [];
+	const data = { pois: [], stops: [{ x: 210, z: 300 }, { x: 400, z: 120 }], entrances: [] };
+	const vendors = placeVendors({ add: (m) => added.push(m) }, data, graph, crowd, null, { stalls: 6 });
+	assert.ok(vendors.length >= 3 && vendors.length <= 6, `${vendors.length} stalls`);
+	assert.ok(added.length <= 4, 'all stalls share at most four meshes');
+	for (const v of vendors) {
+		// Distance to the nearest street centre line (grid lines every 100 m).
+		const dx = Math.abs(v.x - Math.round(v.x / 100) * 100), dz = Math.abs(v.z - Math.round(v.z / 100) * 100);
+		const d = Math.min(dx, dz);
+		assert.ok(d > 5, `stall off the carriageway (${d.toFixed(1)} m from the centre line)`);
+		// Facing the street: forward points towards the nearer centre line.
+		const toLine = dx < dz ? [Math.sign(Math.round(v.x / 100) * 100 - v.x), 0] : [0, Math.sign(Math.round(v.z / 100) * 100 - v.z)];
+		assert.ok(Math.sin(v.yaw) * toLine[0] + Math.cos(v.yaw) * toLine[1] > 0.9, 'stall faces the street');
+		const i = crowd.id.indexOf(v.id);
+		assert.ok(i >= 0 && Math.hypot(crowd.x[i] - v.x, crowd.z[i] - v.z) < 0.8, 'seller at the stall');
+	}
+	console.log(`ok vendors: ${vendors.length} stalls in ${added.length} meshes`);
+}

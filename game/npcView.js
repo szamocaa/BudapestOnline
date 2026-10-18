@@ -8,6 +8,11 @@
 //
 // Draw calls: one per level of detail, plus a shadow-only copy of the nearest people (cheaper
 // geometry) that is drawn in the shadow maps only: 3 + 2 (two sun cascades) on high.
+//
+// TODO(people), in order of value: uniformed roles (police pairs, BKK inspectors, FKF sweepers in
+// orange: new look fields + ROLE in crowd.js), standing chat groups and sitting on benches
+// (data.props benches), children walking with a parent, prams / dogs / suitcases near Keleti,
+// tracksuit side stripes, a smoother LOD1 -> LOD2 transition (dither fade).
 import * as THREE from './vendor/three.module.min.js';
 import { makeLook } from './crowd.js';
 import { buildPerson } from './people/body.js';
