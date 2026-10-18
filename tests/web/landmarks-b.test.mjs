@@ -50,6 +50,10 @@ import { simplifyRing, offsetRing, edgeNormals, Frame } from '../../game/city/la
 	// Wrap-around: indices 9, 0, 1 of a 10-edge ring chain as 9 → 0 → 1.
 	const wrap = chainFront([0, 1, 9].map((i) => ({ i, length: 5, withRing: true })), 10);
 	assert.deepEqual(wrap.list.map((e) => e.seg.i), [9, 0, 1]);
+	// Only the longest run of consecutive edges is the front; the rest are side steps.
+	const mixed = chainFront([0, 1, 2, 5, 7].map((i) => ({ i, length: i < 3 ? 10 : 4, withRing: true })), 12);
+	assert.deepEqual(mixed.list.map((e) => e.seg.i), [0, 1, 2]);
+	assert.deepEqual(mixed.others.map((f) => f.i), [5, 7]);
 	const pieces = signPieces(list, 5, 25);
 	assert.equal(pieces.length, 3);
 	assert.ok(Math.abs(pieces[0].u0) < 1e-9 && Math.abs(pieces[2].u1 - 1) < 1e-9);

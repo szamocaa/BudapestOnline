@@ -33,32 +33,37 @@ export function splitStage(ring) {
 }
 
 /**
- * Orders the facade segments of a (curved) front left→right as seen from outside and gives each
- * its running distance: [{ seg, s0, s1 }], plus the total length. Pure (testable).
+ * Picks the main front among the north-facing facade segments: the longest run of consecutive
+ * ring edges (the side wings' small north-facing steps are left out, in `others`). The run is
+ * ordered left→right as seen from outside, with running distances: { list: [{ seg, s0, s1 }],
+ * total, others }. Pure (testable).
  */
 export function chainFront(segs, n = Infinity) {
-	if (!segs.length) return { list: [], total: 0 };
-	// A segment runs with the ring when its frame origin is the ring's start point.
-	const withRing = segs.filter((f) => f.withRing).length >= segs.length / 2;
-	let ordered = [...segs].sort((a, b) => a.i - b.i);
-	// Rings wrap around: start after the largest index gap so the chain is contiguous.
-	if (Number.isFinite(n) && ordered.length > 1) {
-		let best = 0, at = 0;
-		ordered.forEach((f, k) => {
-			const next = ordered[(k + 1) % ordered.length];
-			const gap = (next.i - f.i + n) % n;
-			if (gap > best) { best = gap; at = (k + 1) % ordered.length; }
-		});
-		ordered = [...ordered.slice(at), ...ordered.slice(0, at)];
+	if (!segs.length) return { list: [], total: 0, others: [] };
+	const sorted = [...segs].sort((a, b) => a.i - b.i);
+	const runs = [];
+	for (const f of sorted) {
+		const last = runs[runs.length - 1];
+		if (last && f.i - last[last.length - 1].i === 1) last.push(f);
+		else runs.push([f]);
 	}
-	if (!withRing) ordered.reverse();
+	// Rings wrap around: a run ending at the last edge continues with the one starting at edge 0.
+	if (runs.length > 1 && Number.isFinite(n)) {
+		const first = runs[0], last = runs[runs.length - 1];
+		if (first[0].i === 0 && last[last.length - 1].i === n - 1) { runs[0] = [...last, ...first]; runs.pop(); }
+	}
+	const len = (r) => r.reduce((s, f) => s + f.length, 0);
+	const best = runs.reduce((a, r) => (len(r) > len(a) ? r : a));
+	// A segment runs with the ring when its frame origin is the ring's start point.
+	const withRing = best.filter((f) => f.withRing).length >= best.length / 2;
+	const ordered = withRing ? best : [...best].reverse();
 	let s = 0;
 	const list = ordered.map((seg) => {
 		const s0 = s;
 		s += seg.length;
 		return { seg, s0, s1: s };
 	});
-	return { list, total: s };
+	return { list, total: s, others: segs.filter((f) => !best.includes(f)) };
 }
 
 /** Sign panel pieces for a text band from sA to sB along a chain: [{ seg, x0, x1, u0, u1 }]. */
@@ -122,8 +127,9 @@ export default {
 			if (nz < -0.55) front.push({ ...f, withRing: Math.abs(f.frame.x - a[0]) < 1e-6 && Math.abs(f.frame.z - a[1]) < 1e-6 });
 			else sideFacade(m, f.frame, f.length, nx > 0.55);
 		}
-		const { list, total } = chainFront(front, rest.length);
+		const { list, total, others } = chainFront(front, rest.length);
 		for (const { seg } of list) foyerFront(m, seg.frame, seg.length);
+		for (const f of others) sideFacade(m, f.frame, f.length, false);
 
 		// "ERKEL SZÍNHÁZ" in gilt letters along the curved attic.
 		let signMat = null;
@@ -131,11 +137,11 @@ export default {
 			const W = Math.min(total - 4, 36), sA = (total - W) / 2;
 			const hgt = W / 17;
 			const y0 = FOYER_TOP + (H - 0.75 - FOYER_TOP - hgt) / 2;
-			const sign = signTex('ERKEL SZÍNHÁZ', { w: 2048, h: 120, colour: '#cfae62', glow: '#fff0c8', font: '700 104px Georgia, "Times New Roman", serif', letterSpacing: 22 });
+			const sign = signTex('ERKEL SZÍNHÁZ', { w: 2048, h: 120, colour: '#4d3c29', glow: '#ffe9bf', font: '700 104px Georgia, "Times New Roman", serif', letterSpacing: 22 });
 			for (const p of signPieces(list, sA, sA + W)) {
 				m.panel('sign', p.seg.frame, p.x0, y0, p.x1, y0 + hgt, 0.16, [p.u0, 0, p.u1, 1], [1, 1, 1]);
 			}
-			signMat = ctx.night(new THREE.MeshStandardMaterial({ map: sign.map, emissiveMap: sign.emissive, emissive: 0xffffff, emissiveIntensity: 0, alphaTest: 0.4, roughness: 0.35, metalness: 0.7, side: THREE.DoubleSide }), 2.4);
+			signMat = ctx.night(new THREE.MeshStandardMaterial({ map: sign.map, emissiveMap: sign.emissive, emissive: 0xffffff, emissiveIntensity: 0, alphaTest: 0.4, roughness: 0.4, metalness: 0.35, side: THREE.DoubleSide }), 2.4);
 		}
 
 		// ------------------------------------------------------------------ forecourt
